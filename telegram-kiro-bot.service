@@ -1,0 +1,14 @@
+[Unit]
+Description=Telegram Kiro Bot
+After=network.target
+
+[Service]
+Type=simple
+User=mark
+WorkingDirectory=/home/mark/git/remote-kiro
+ExecStart=/usr/bin/python3 /home/mark/git/remote-kiro/telegram_kiro_bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

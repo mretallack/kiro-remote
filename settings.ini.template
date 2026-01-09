@@ -1,0 +1,7 @@
+[telegram]
+token = YOUR_BOT_TOKEN_HERE
+
+[bot]
+authorized_user = markretallack
+auto_trust = true
+progress_updates = true
