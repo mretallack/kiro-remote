@@ -1,1 +1,1 @@
-# No external dependencies - uses only Python standard library
+python-telegram-bot==21.8

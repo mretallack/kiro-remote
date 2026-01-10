@@ -6,11 +6,12 @@ import re
 import os
 import configparser
 from queue import Queue, Empty
+from telegram import Update
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
 class KiroSession:
     def __init__(self, config):
         self.process = None
-        self.input_queue = Queue()
         self.output_queue = Queue()
         self.config = config
         self.telegram_bot = None
@@ -18,6 +19,7 @@ class KiroSession:
     
     def start_session(self):
         """Start persistent Kiro session"""
+        print("[DEBUG] Starting Kiro session")
         env = os.environ.copy()
         env['NO_COLOR'] = '1'
         
@@ -31,13 +33,18 @@ class KiroSession:
             env=env,
             cwd='/home/mark/git/remote-kiro'
         )
+        print(f"[DEBUG] Kiro process started with PID: {self.process.pid}")
         
         # Start output reader thread
         threading.Thread(target=self._read_output, daemon=True).start()
         
         # Load previous session
         self._send_command('/load telegram_session')
-        time.sleep(1)  # Wait for load to complete
+        time.sleep(1)
+        
+        # Trust all tools to avoid prompts
+        self._send_command('/tools trust-all')
+        time.sleep(1)
     
     def _read_output(self):
         """Read output from Kiro process"""
@@ -46,7 +53,8 @@ class KiroSession:
                 line = self.process.stdout.readline()
                 if line:
                     self.output_queue.put(line)
-            except:
+            except Exception as e:
+                print(f"[DEBUG] Error reading output: {e}")
                 break
     
     def _send_command(self, command):
@@ -57,14 +65,7 @@ class KiroSession:
     
     def detect_input_prompt(self, line):
         """Detect if Kiro is waiting for user input"""
-        patterns = [
-            r'\(y/n\)',
-            r'\[y/N\]', 
-            r'Trust this action\?',
-            r'Continue\?',
-            r'Press Enter to continue',
-            r'>\s*$'
-        ]
+        patterns = [r'\[y/n/t\]', r'\(y/n\)', r'\[y/N\]', r'>\s*$']
         return any(re.search(pattern, line, re.IGNORECASE) for pattern in patterns)
     
     def handle_auto_trust(self, line):
@@ -72,16 +73,12 @@ class KiroSession:
         if not self.config.getboolean('bot', 'auto_trust', fallback=False):
             return False
             
-        trust_patterns = [
-            r'Trust this action\? \(y/n\)',
-            r'Continue\? \[y/N\]',
-            r'Proceed\? \(y/n\)'
-        ]
-        
-        for pattern in trust_patterns:
-            if re.search(pattern, line, re.IGNORECASE):
-                self._send_command('y')
-                return True
+        if '[y/n/t]' in line:
+            self._send_command('t')
+            return True
+        elif '(y/n)' in line or '[y/N]' in line:
+            self._send_command('y')
+            return True
         return False
     
     def _strip_ansi(self, text):
@@ -89,8 +86,8 @@ class KiroSession:
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
         return ansi_escape.sub('', text)
     
-    def send_message(self, message, chat_id=None):
-        """Send message and get response with enhanced features"""
+    async def send_message(self, message, context=None):
+        """Send message and get response"""
         # Clear output queue
         while not self.output_queue.empty():
             try:
@@ -104,7 +101,6 @@ class KiroSession:
         # Collect response
         response_lines = []
         start_time = time.time()
-        last_update = start_time
         
         while time.time() - start_time < 30:
             try:
@@ -113,24 +109,18 @@ class KiroSession:
                 
                 # Check for input prompts
                 if self.detect_input_prompt(line):
-                    if self.telegram_bot and chat_id:
-                        self.telegram_bot.send_message(chat_id, f"⏳ Waiting for input: {clean_line}")
+                    if context:
+                        await context.bot.send_message(
+                            chat_id=context.effective_chat.id,
+                            text=f"⏳ Waiting for input: {clean_line}"
+                        )
                     
-                    # Try auto-trust
                     if self.handle_auto_trust(line):
                         continue
                 
                 # Skip empty lines and prompts
                 if clean_line and not clean_line.endswith('>'):
                     response_lines.append(clean_line)
-                
-                # Progress updates for long operations
-                if (self.config.getboolean('bot', 'progress_updates', fallback=False) and 
-                    time.time() - last_update > 10 and response_lines and 
-                    self.telegram_bot and chat_id):
-                    partial = '\n'.join(response_lines[-10:])
-                    self.telegram_bot.send_message(chat_id, f"🔄 Latest: {partial}")
-                    last_update = time.time()
                 
                 # Check if response is complete
                 if line.strip().endswith('>'):
@@ -150,70 +140,38 @@ class TelegramBot:
         self.authorized_user = authorized_user
         self.config = config
         self.kiro = KiroSession(config)
-        self.kiro.telegram_bot = self  # Set reference for callbacks
-        self.offset = 0
-    
-    def get_updates(self):
-        """Get updates from Telegram"""
-        try:
-            result = subprocess.run([
-                'curl', '-s', f'https://api.telegram.org/bot{self.token}/getUpdates',
-                '-d', f'offset={self.offset}&timeout=10'
-            ], capture_output=True, text=True, timeout=15)
-            
-            if result.returncode == 0:
-                import json
-                data = json.loads(result.stdout)
-                return data.get('result', [])
-        except:
-            pass
-        return []
-    
-    def send_message(self, chat_id, text):
-        """Send message to Telegram with smart truncation"""
-        # Smart truncation - show end instead of beginning
-        if len(text) > 4000:
-            text = "...(showing end)\n" + text[-3950:]
+        self.application = Application.builder().token(token).build()
         
-        subprocess.run([
-            'curl', '-s', f'https://api.telegram.org/bot{self.token}/sendMessage',
-            '-d', f'chat_id={chat_id}',
-            '-d', f'text={text}'
-        ], capture_output=True)
+        # Add message handler
+        self.application.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
+        )
+    
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle incoming messages"""
+        username = update.effective_user.username
+        
+        # Only respond to authorized user
+        if username != self.authorized_user:
+            return
+        
+        message_text = update.message.text
+        print(f"Processing: {message_text}")
+        
+        # Get response from Kiro
+        response = await self.kiro.send_message(message_text, context)
+        
+        # Smart truncation - show end instead of beginning
+        if len(response) > 4000:
+            response = "...(showing end)\n" + response[-3950:]
+        
+        # Send response
+        await update.message.reply_text(response)
     
     def run(self):
-        """Main bot loop"""
+        """Start the bot"""
         print("Telegram Kiro Bot started...")
-        
-        while True:
-            try:
-                updates = self.get_updates()
-                
-                for update in updates:
-                    self.offset = update['update_id'] + 1
-                    
-                    if 'message' in update and 'text' in update['message']:
-                        chat_id = update['message']['chat']['id']
-                        username = update['message']['from'].get('username', 'unknown')
-                        text = update['message']['text']
-                        
-                        # Only respond to authorized user
-                        if username != self.authorized_user:
-                            continue
-                        
-                        print(f"Processing: {text}")
-                        
-                        # Get response from Kiro
-                        response = self.kiro.send_message(text, chat_id)
-                        
-                        # Send response
-                        self.send_message(chat_id, response)
-                        
-            except KeyboardInterrupt:
-                break
-            except Exception as e:
-                print(f"Error: {e}")
-                time.sleep(5)
+        self.application.run_polling()
 
 if __name__ == '__main__':
     config = configparser.ConfigParser()
