@@ -7,6 +7,7 @@ import os
 import configparser
 from queue import Queue, Empty
 from telegram import Update
+from telegram.constants import ChatAction
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 from telegram.constants import ChatAction
 
@@ -23,6 +24,9 @@ class KiroSession:
         print("[DEBUG] Starting Kiro session")
         env = os.environ.copy()
         env['NO_COLOR'] = '1'
+        env['EDITOR'] = 'cat'  # Prevent vim from opening
+        env['VISUAL'] = 'cat'  # Prevent vim from opening
+        env['TERM'] = 'dumb'   # Indicate non-interactive terminal
         
         self.process = subprocess.Popen(
             ['kiro-cli', 'chat', '--trust-all-tools'],
@@ -66,7 +70,7 @@ class KiroSession:
     
     def detect_input_prompt(self, line):
         """Detect if Kiro is waiting for user input"""
-        patterns = [r'\[y/n/t\]', r'\(y/n\)', r'\[y/N\]', r'>\s*$']
+        patterns = [r'\[y/n/t\]', r'\(y/n\)', r'\[y/N\]', r'>\s*$', r'!>!>', r'!>']
         return any(re.search(pattern, line, re.IGNORECASE) for pattern in patterns)
     
     def handle_auto_trust(self, line):
@@ -80,6 +84,10 @@ class KiroSession:
         elif '(y/n)' in line or '[y/N]' in line:
             self._send_command('y')
             return True
+        elif '!>!>' in line or '!>' in line:
+            # Send Enter to continue past prompts
+            self._send_command('')
+            return True
         return False
     
     def _strip_ansi(self, text):
@@ -87,7 +95,7 @@ class KiroSession:
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
         return ansi_escape.sub('', text)
     
-    async def send_message(self, message, context=None):
+    async def send_message(self, message, update=None, context=None):
         """Send message and get response"""
         # Clear output queue
         while not self.output_queue.empty():
@@ -102,32 +110,52 @@ class KiroSession:
         # Collect response
         response_lines = []
         start_time = time.time()
+        last_typing = 0
+        last_output_time = time.time()
         
         while time.time() - start_time < 30:
+            # Send typing indicator every 4 seconds
+            current_time = time.time()
+            if update and context and current_time - last_typing > 4:
+                await context.bot.send_chat_action(
+                    chat_id=update.effective_chat.id,
+                    action=ChatAction.TYPING
+                )
+                last_typing = current_time
+            
             try:
                 line = self.output_queue.get(timeout=1)
                 clean_line = self._strip_ansi(line.strip())
+                last_output_time = time.time()
                 
                 # Check for input prompts
                 if self.detect_input_prompt(line):
-                    if context:
+                    if update and context:
                         await context.bot.send_message(
-                            chat_id=context.effective_chat.id,
+                            chat_id=update.effective_chat.id,
                             text=f"⏳ Waiting for input: {clean_line}"
                         )
                     
                     if self.handle_auto_trust(line):
                         continue
                 
-                # Skip empty lines and prompts
-                if clean_line and not clean_line.endswith('>'):
+                # Skip empty lines but collect all content
+                if clean_line:
+                    # Filter out spinner messages and prompts
+                    if (re.match(r'^. Thinking\.\.\.$', clean_line) or 
+                        clean_line.strip() == '>' or 
+                        clean_line.strip().endswith('> ')):
+                        continue
                     response_lines.append(clean_line)
                 
-                # Check if response is complete
-                if line.strip().endswith('>'):
+                # Check if response is complete (Kiro prompt returned)
+                if clean_line.strip() == '>' or (len(clean_line.strip()) <= 3 and clean_line.strip().endswith('>')):
                     break
                     
             except Empty:
+                # If no output for 2 seconds and we have content, assume done
+                if time.time() - last_output_time > 2 and response_lines:
+                    break
                 continue
         
         # Save session after each interaction
@@ -157,6 +185,11 @@ class TelegramBot:
             return
         
         message_text = update.message.text
+        
+        # Map backslash to forward slash for Kiro commands
+        if message_text.startswith('\\'):
+            message_text = '/' + message_text[1:]
+        
         print(f"Processing: {message_text}")
         
         # Show typing indicator
@@ -166,7 +199,7 @@ class TelegramBot:
         )
         
         # Get response from Kiro
-        response = await self.kiro.send_message(message_text, context)
+        response = await self.kiro.send_message(message_text, update, context)
         
         # Smart truncation - show end instead of beginning
         if len(response) > 4000:
@@ -176,9 +209,15 @@ class TelegramBot:
         await update.message.reply_text(response)
     
     def run(self):
-        """Start the bot"""
+        """Start the bot with error recovery"""
         print("Telegram Kiro Bot started...")
-        self.application.run_polling()
+        while True:
+            try:
+                self.application.run_polling()
+            except Exception as e:
+                print(f"Bot crashed with error: {e}")
+                print("Restarting in 5 seconds...")
+                time.sleep(5)
 
 if __name__ == '__main__':
     config = configparser.ConfigParser()
