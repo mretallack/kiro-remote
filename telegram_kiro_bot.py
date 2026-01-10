@@ -8,6 +8,7 @@ import configparser
 from queue import Queue, Empty
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from telegram.constants import ChatAction
 
 class KiroSession:
     def __init__(self, config):
@@ -157,6 +158,12 @@ class TelegramBot:
         
         message_text = update.message.text
         print(f"Processing: {message_text}")
+        
+        # Show typing indicator
+        await context.bot.send_chat_action(
+            chat_id=update.effective_chat.id, 
+            action=ChatAction.TYPING
+        )
         
         # Get response from Kiro
         response = await self.kiro.send_message(message_text, context)
