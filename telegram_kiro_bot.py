@@ -24,7 +24,7 @@ class KiroSession:
         env['NO_COLOR'] = '1'
         
         self.process = subprocess.Popen(
-            ['kiro-cli', 'chat'],
+            ['kiro-cli', 'chat', '--trust-all-tools'],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
