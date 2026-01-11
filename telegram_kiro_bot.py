@@ -4,11 +4,13 @@ import threading
 import time
 import re
 import os
+import json
 import configparser
+from pathlib import Path
 from queue import Queue, Empty
 from telegram import Update
 from telegram.constants import ChatAction
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 
 class KiroSession:
     def __init__(self):
@@ -19,19 +21,34 @@ class KiroSession:
         self.telegram_bot = None
         self.response_buffer = []
         self.last_activity = time.time()
+        self.current_agent = None  # Track current agent
+        self.conversation_history = []  # Track conversation for replay
         self.start_session()
     
-    def start_session(self):
+    def start_session(self, agent_name=None):
         """Start persistent Kiro session with threaded I/O"""
-        print("[DEBUG] Starting Kiro session")
+        print(f"[DEBUG] Starting Kiro session with agent: {agent_name}")
+        
+        # Stop existing session if running
+        if self.process and self.process.poll() is None:
+            self.stop_session()
+        
         env = os.environ.copy()
         env['NO_COLOR'] = '1'
         env['EDITOR'] = 'cat'
         env['VISUAL'] = 'cat'
         env['TERM'] = 'dumb'
         
+        # Build command with optional agent
+        cmd = ['kiro-cli', 'chat', '--trust-all-tools']
+        if agent_name:
+            cmd.extend(['--agent', agent_name])
+            self.current_agent = agent_name
+        else:
+            self.current_agent = 'kiro_default'
+        
         self.process = subprocess.Popen(
-            ['kiro-cli', 'chat', '--trust-all-tools'],
+            cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -40,7 +57,7 @@ class KiroSession:
             env=env,
             cwd='/home/mark/git/remote-kiro'
         )
-        print(f"[DEBUG] Kiro process started with PID: {self.process.pid}")
+        print(f"[DEBUG] Kiro process started with PID: {self.process.pid}, agent: {self.current_agent}")
         
         # Start I/O threads
         threading.Thread(target=self._input_thread, daemon=True).start()
@@ -51,6 +68,26 @@ class KiroSession:
         # Trust all tools
         self.send_to_kiro('/tools trust-all')
         time.sleep(1)
+    
+    def stop_session(self):
+        """Stop the current Kiro session"""
+        if self.process and self.process.poll() is None:
+            print(f"[DEBUG] Stopping Kiro process {self.process.pid}")
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                print("[DEBUG] Force killing Kiro process")
+                self.process.kill()
+                self.process.wait()
+        self.process = None
+    
+    def restart_session(self, agent_name=None):
+        """Restart Kiro session with optional different agent"""
+        print(f"[DEBUG] Restarting session with agent: {agent_name}")
+        self.stop_session()
+        time.sleep(1)  # Brief pause
+        self.start_session(agent_name)
     
     def _input_thread(self):
         """Thread to handle input to Kiro"""
@@ -153,6 +190,10 @@ class KiroSession:
         response = '\n'.join(self.response_buffer)
         self.response_buffer = []
         
+        # Track bot response in conversation history
+        if self.conversation_history and response.strip():
+            self.conversation_history[-1]["bot"] = response.strip()
+        
         print(f"[DEBUG] Sending response: {response[:200]}...")
         
         # Smart truncation
@@ -188,7 +229,65 @@ class KiroSession:
         if message.startswith('\\'):
             message = '/' + message[1:]
         
+        # Track conversation history (exclude bot commands)
+        if not message.startswith('/'):
+            self.conversation_history.append({"user": message, "timestamp": time.time()})
+        
         self.input_queue.put(message)
+    
+    def save_state(self, name="__auto_save__"):
+        """Save current conversation state to file"""
+        try:
+            state_dir = Path.home() / ".kiro" / "bot_conversations"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            
+            state = {
+                "current_agent": self.current_agent,
+                "timestamp": time.time(),
+                "conversation_history": self.conversation_history,
+                "working_directory": "/home/mark/git/remote-kiro"
+            }
+            
+            state_file = state_dir / f"{name}.json"
+            with open(state_file, 'w') as f:
+                json.dump(state, f, indent=2)
+            
+            print(f"[DEBUG] State saved to {state_file}")
+            return True
+        except Exception as e:
+            print(f"[DEBUG] Error saving state: {e}")
+            return False
+    
+    def load_state(self, name="__auto_save__"):
+        """Load conversation state from file"""
+        try:
+            state_file = Path.home() / ".kiro" / "bot_conversations" / f"{name}.json"
+            if not state_file.exists():
+                print(f"[DEBUG] State file {state_file} does not exist")
+                return False
+            
+            with open(state_file, 'r') as f:
+                state = json.load(f)
+            
+            self.current_agent = state.get("current_agent", "kiro_default")
+            self.conversation_history = state.get("conversation_history", [])
+            
+            print(f"[DEBUG] State loaded from {state_file}, agent: {self.current_agent}")
+            return True
+        except Exception as e:
+            print(f"[DEBUG] Error loading state: {e}")
+            return False
+    
+    def replay_conversation(self):
+        """Replay conversation history to restore context"""
+        if not self.conversation_history:
+            return
+        
+        print(f"[DEBUG] Replaying {len(self.conversation_history)} messages")
+        for entry in self.conversation_history:
+            if "user" in entry:
+                self.send_to_kiro(entry["user"])
+                time.sleep(0.5)  # Brief pause between messages
     
     def set_chat_id(self, chat_id):
         """Set current chat ID for responses"""
@@ -200,12 +299,25 @@ class TelegramBot:
         self.authorized_user = authorized_user
         self.kiro = KiroSession()
         self.kiro.telegram_bot = self
+        
+        # Try to restore previous session
+        if self.kiro.load_state():
+            print(f"[DEBUG] Restored previous session with agent: {self.kiro.current_agent}")
+            self.kiro.restart_session(self.kiro.current_agent)
+        
         self.application = Application.builder().token(token).build()
         self.loop = None
         
+        # Add message and command handlers
         self.application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
         )
+        self.application.add_handler(CommandHandler("create_agent", self.create_agent))
+        self.application.add_handler(CommandHandler("list_agents", self.list_agents))
+        self.application.add_handler(CommandHandler("switch_agent", self.switch_agent))
+        self.application.add_handler(CommandHandler("save_chat", self.save_chat))
+        self.application.add_handler(CommandHandler("load_chat", self.load_chat))
+        self.application.add_handler(CommandHandler("list_chats", self.list_chats))
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming messages"""
@@ -235,6 +347,138 @@ class TelegramBot:
         self.kiro.set_chat_id(update.effective_chat.id)
         print(f"[DEBUG] Sending to Kiro: {message_text}")
         self.kiro.send_to_kiro(message_text)
+    
+    async def create_agent(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /create_agent command"""
+        if update.effective_user.username != self.authorized_user:
+            return
+        
+        args = context.args
+        if not args:
+            await update.message.reply_text("Usage: /create_agent <agent_name>")
+            return
+        
+        agent_name = args[0]
+        await update.message.reply_text(f"Creating agent '{agent_name}'...\nWhat's the agent description?")
+        # TODO: Implement interactive agent creation
+    
+    async def list_agents(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /list_agents command"""
+        if update.effective_user.username != self.authorized_user:
+            return
+        
+        try:
+            # Get agents from kiro-cli
+            result = subprocess.run(['kiro-cli', 'agent', 'list'], 
+                                  capture_output=True, text=True, cwd='/home/mark/git/remote-kiro')
+            
+            if result.returncode == 0:
+                await update.message.reply_text(f"Available agents:\n```\n{result.stdout}\n```", parse_mode='Markdown')
+            else:
+                await update.message.reply_text(f"Error listing agents: {result.stderr}")
+        except Exception as e:
+            await update.message.reply_text(f"Error: {e}")
+    
+    async def switch_agent(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /switch_agent command"""
+        if update.effective_user.username != self.authorized_user:
+            return
+        
+        args = context.args
+        if not args:
+            await update.message.reply_text("Usage: /switch_agent <agent_name>")
+            return
+        
+        agent_name = args[0]
+        
+        # Auto-save current state
+        self.kiro.save_state()
+        
+        await update.message.reply_text(f"Switching to agent '{agent_name}'...")
+        
+        # Restart with new agent
+        self.kiro.restart_session(agent_name)
+        
+        await update.message.reply_text(f"Now using agent: {agent_name}")
+    
+    async def save_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /save_chat command"""
+        if update.effective_user.username != self.authorized_user:
+            return
+        
+        args = context.args
+        if not args:
+            await update.message.reply_text("Usage: /save_chat <name>")
+            return
+        
+        name = args[0]
+        if self.kiro.save_state(name):
+            await update.message.reply_text(f"Conversation saved as '{name}'")
+        else:
+            await update.message.reply_text("Error saving conversation")
+    
+    async def load_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /load_chat command"""
+        if update.effective_user.username != self.authorized_user:
+            return
+        
+        args = context.args
+        if not args:
+            await update.message.reply_text("Usage: /load_chat <name>")
+            return
+        
+        name = args[0]
+        if self.kiro.load_state(name):
+            await update.message.reply_text(f"Loading conversation '{name}'...")
+            
+            # Restart with saved agent
+            self.kiro.restart_session(self.kiro.current_agent)
+            
+            # Replay conversation
+            self.kiro.replay_conversation()
+            
+            await update.message.reply_text(f"Conversation '{name}' restored")
+        else:
+            await update.message.reply_text(f"Error loading conversation '{name}'")
+    
+    async def list_chats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /list_chats command"""
+        if update.effective_user.username != self.authorized_user:
+            return
+        
+        try:
+            state_dir = Path.home() / ".kiro" / "bot_conversations"
+            if not state_dir.exists():
+                await update.message.reply_text("No saved conversations found")
+                return
+            
+            chat_files = list(state_dir.glob("*.json"))
+            if not chat_files:
+                await update.message.reply_text("No saved conversations found")
+                return
+            
+            chat_list = []
+            for chat_file in chat_files:
+                name = chat_file.stem
+                if name == "__auto_save__":
+                    continue
+                
+                try:
+                    with open(chat_file, 'r') as f:
+                        state = json.load(f)
+                    timestamp = state.get("timestamp", 0)
+                    agent = state.get("current_agent", "unknown")
+                    date_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(timestamp))
+                    chat_list.append(f"• {name} ({agent}) - {date_str}")
+                except:
+                    chat_list.append(f"• {name} (corrupted)")
+            
+            if chat_list:
+                await update.message.reply_text("Saved conversations:\n" + "\n".join(chat_list))
+            else:
+                await update.message.reply_text("No saved conversations found")
+        except Exception as e:
+            await update.message.reply_text(f"Error: {e}")
     
     def send_response_threadsafe(self, chat_id, text):
         """Send response to Telegram from thread"""
