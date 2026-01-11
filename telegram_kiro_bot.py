@@ -43,10 +43,6 @@ class KiroSession:
         # Start output reader thread
         threading.Thread(target=self._read_output, daemon=True).start()
         
-        # Load previous session
-        self._send_command('/load telegram_session')
-        time.sleep(1)
-        
         # Trust all tools to avoid prompts
         self._send_command('/tools trust-all')
         time.sleep(1)
@@ -57,6 +53,7 @@ class KiroSession:
             try:
                 line = self.process.stdout.readline()
                 if line:
+                    print(f"[DEBUG] RAW FROM KIRO: {repr(line.strip())}")
                     self.output_queue.put(line)
             except Exception as e:
                 print(f"[DEBUG] Error reading output: {e}")
@@ -65,6 +62,7 @@ class KiroSession:
     def _send_command(self, command):
         """Send command to Kiro"""
         if self.process and self.process.poll() is None:
+            print(f"[DEBUG] SENDING TO KIRO: {repr(command)}")
             self.process.stdin.write(command + '\n')
             self.process.stdin.flush()
     
@@ -105,7 +103,13 @@ class KiroSession:
                 break
         
         # Send message
+        print(f"[DEBUG] USER MESSAGE: {repr(message)}")
         self._send_command(message)
+        
+        # Commands that don't produce responses - return immediately
+        if message.strip().startswith('/agent swap'):
+            time.sleep(0.5)  # Brief pause for command to process
+            return "Agent swapped successfully"
         
         # Collect response
         response_lines = []
@@ -126,6 +130,7 @@ class KiroSession:
             try:
                 line = self.output_queue.get(timeout=1)
                 clean_line = self._strip_ansi(line.strip())
+                print(f"[DEBUG] PROCESSED LINE: {repr(clean_line)}")
                 last_output_time = time.time()
                 
                 # Check for input prompts
@@ -139,29 +144,34 @@ class KiroSession:
                     if self.handle_auto_trust(line):
                         continue
                 
-                # Skip empty lines but collect all content
-                if clean_line:
-                    # Filter out spinner messages and prompts
-                    if (re.match(r'^. Thinking\.\.\.$', clean_line) or 
-                        clean_line.strip() == '>' or 
-                        clean_line.strip().endswith('> ')):
-                        continue
+                # Extract actual response content from lines with embedded prompts
+                if '> ' in clean_line and not clean_line.strip().endswith('> '):
+                    # Extract content after the prompt marker
+                    parts = clean_line.split('> ', 1)
+                    if len(parts) > 1 and parts[1].strip():
+                        response_lines.append(parts[1].strip())
+                elif clean_line and not (
+                    re.match(r'^. Thinking\.\.\.$', clean_line) or 
+                    clean_line.strip() == '>' or 
+                    clean_line.strip().endswith('> ') or
+                    clean_line.startswith('▸ Credits:')):
                     response_lines.append(clean_line)
                 
-                # Check if response is complete (Kiro prompt returned)
-                if clean_line.strip() == '>' or (len(clean_line.strip()) <= 3 and clean_line.strip().endswith('>')):
+                # Check if response is complete (Kiro prompt returned or credits line)
+                if (clean_line.strip() == '>' or 
+                    (len(clean_line.strip()) <= 3 and clean_line.strip().endswith('>')) or
+                    clean_line.startswith('▸ Credits:')):
                     break
                     
             except Empty:
-                # If no output for 2 seconds and we have content, assume done
-                if time.time() - last_output_time > 2 and response_lines:
+                # Only break on timeout if we haven't seen any content yet
+                if time.time() - start_time > 25 and not response_lines:
                     break
                 continue
         
-        # Save session after each interaction
-        self._send_command('/save telegram_session')
-        
-        return '\n'.join(response_lines) if response_lines else "No response received"
+        final_response = '\n'.join(response_lines) if response_lines else "No response received"
+        print(f"[DEBUG] FINAL RESPONSE: {repr(final_response)}")
+        return final_response
 
 class TelegramBot:
     def __init__(self, token, authorized_user, config):
@@ -201,9 +211,11 @@ class TelegramBot:
         # Get response from Kiro
         response = await self.kiro.send_message(message_text, update, context)
         
-        # Smart truncation - show end instead of beginning
+        # Smart truncation - show beginning and end
         if len(response) > 4000:
-            response = "...(showing end)\n" + response[-3950:]
+            beginning = response[:1500]
+            end = response[-1500:]
+            response = f"{beginning}\n\n...(truncated middle)...\n\n{end}"
         
         # Send response
         await update.message.reply_text(response)

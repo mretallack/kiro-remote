@@ -5,17 +5,18 @@ A Python service that bridges Telegram with Kiro CLI, maintaining persistent con
 ## Features
 
 - **Persistent Session**: Maintains a single Kiro CLI session across all messages
-- **Conversation Memory**: Automatically saves/loads conversation state
-- **Clean Output**: Strips ANSI escape codes for Telegram compatibility
-- **User Filtering**: Only responds to authorized user (markretallack)
+- **Auto Tool Trust**: Automatically trusts all tools to avoid prompts
+- **Clean Output**: Strips ANSI escape codes for Telegram compatibility  
+- **User Filtering**: Only responds to authorized user (configurable)
 - **Error Handling**: Robust error handling and automatic recovery
+- **Progress Updates**: Shows typing indicators during processing
 
 ## Setup
 
 1. Copy settings template and configure:
 ```bash
 cp settings.ini.template settings.ini
-# Edit settings.ini with your bot token
+# Edit settings.ini with your bot token and authorized user
 ```
 
 2. Setup and run:
@@ -38,15 +39,18 @@ make service-start
 # Check status and logs
 make service-status
 make service-logs
+
+# Stop service
+make service-stop
 ```
 
 ## How It Works
 
-1. **Persistent Kiro Session**: Starts `kiro-cli chat` once and keeps it running
-2. **Session Management**: Loads previous conversation on startup, saves after each interaction
+1. **Persistent Kiro Session**: Starts `kiro-cli chat --trust-all-tools` once and keeps it running
+2. **Auto Tool Trust**: Automatically trusts all tools using `/tools trust-all` command
 3. **Message Processing**: Sends user messages to Kiro, captures responses
 4. **Output Cleaning**: Removes ANSI codes and filters out prompts
-5. **Telegram Integration**: Uses curl for simple HTTP API calls
+5. **Telegram Integration**: Uses python-telegram-bot library for robust API handling
 
 ## Advantages over shell2telegram
 
