@@ -221,7 +221,7 @@ class TelegramBot:
             print(f"[DEBUG] Unauthorized user {username}, ignoring")
             return
         
-        message_text = update.message.text
+        message_text = update.message.text.replace('\n', '\\n')
         print(f"[DEBUG] Processing message: {message_text}")
         
         # Show typing indicator briefly
