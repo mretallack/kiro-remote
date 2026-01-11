@@ -2,23 +2,29 @@
 
 ## Architecture Overview
 
-Since kiro-cli cannot be modified, the agent management system is implemented entirely within the telegram bot code:
-1. **Agent Creator** - Bot commands that create agent JSON files and restart kiro-cli
-2. **Conversation Manager** - Bot-level conversation state persistence
-3. **Bot Restart Handler** - Bot manages kiro-cli process lifecycle
+The agent management system intercepts Kiro's native commands within the telegram bot, handling them without passing to kiro-cli:
+1. **Command Interceptor** - Bot intercepts `/agent` and `/chat` commands before they reach kiro-cli
+2. **Agent Manager** - Bot handles agent creation, listing, and switching
+3. **Conversation Manager** - Bot-level conversation state persistence
+4. **Bot Restart Handler** - Bot manages kiro-cli process lifecycle
 
 ## Component Design
 
-### 1. Agent Creator (Bot Implementation)
+### 1. Command Interceptor
 
-**New Bot Commands:**
-- `/create_agent <name>` - Bot-handled agent creation
-- `/list_agents` - Bot lists available agents
-- `/switch_agent <name>` - Bot restarts kiro-cli with new agent
+**Intercepted Commands:**
+- `/agent create <name>` or `\agent create <name>` - Bot handles agent creation
+- `/agent list` or `\agent list` - Bot lists available agents  
+- `/agent swap <name>` or `\agent swap <name>` - Bot switches agents
+- `/agent delete <name>` or `\agent delete <name>` - Bot removes agents
+- `/chat save <name>` or `\chat save <name>` - Bot saves conversation
+- `/chat load <name>` or `\chat load <name>` - Bot loads conversation
+- `/chat list` or `\chat list` - Bot lists saved conversations
 
-**Agent Creation Flow:**
+**Interception Flow:**
 ```
-User: /create_agent my-agent
+User: /agent create my-agent  (or \agent create my-agent)
+Bot: [Intercepts command, doesn't pass to kiro-cli]
 Bot: What's the agent description?
 User: [description]
 Bot: What instructions should it have?
@@ -28,28 +34,41 @@ Bot: Restarting kiro-cli with new agent...
 Bot: Agent 'my-agent' is now active
 ```
 
-**Implementation:**
-- Bot creates JSON file in `~/.kiro/agents/<name>.json`
-- Bot restarts kiro-cli process with `--agent my-agent`
-- No kiro-cli modifications needed
+### 2. Agent Manager (Bot Implementation)
 
-### 2. Conversation Manager (Bot Implementation)
+**Agent Creation Flow:**
+- Bot intercepts `/agent create <name>`
+- Bot prompts for description and instructions via Telegram
+- Bot creates JSON file in `~/.kiro/agents/<name>.json`
+- Bot restarts kiro-cli process with `--agent <name>`
+
+**Agent Operations:**
+- `/agent list` - Bot reads from `~/.kiro/agents/` and shows built-in + custom agents
+- `/agent swap <name>` - Bot restarts kiro-cli with new agent
+- `/agent delete <name>` - Bot removes agent file and confirms deletion
+
+**Implementation:**
+- Bot maintains list of built-in agents: `kiro_default`, `kiro_planner`, `dicio`
+- Bot scans `~/.kiro/agents/` for custom agents
+- Bot validates agent names and configurations
+
+### 3. Conversation Manager (Bot Implementation)
+
+**Intercepted Chat Commands:**
+- `/chat save <name>` - Bot saves current conversation state
+- `/chat load <name>` - Bot restarts kiro-cli and replays conversation  
+- `/chat list` - Bot lists saved conversations
 
 **Bot-Level State Management:**
 - Bot maintains conversation history in memory
 - Bot saves state to `~/.kiro/bot_conversations/<name>.json`
 - Bot handles save/load without kiro-cli involvement
 
-**Bot Commands:**
-- `/save_chat <name>` - Bot saves current conversation
-- `/load_chat <name>` - Bot restarts kiro-cli and replays conversation
-- `/list_chats` - Bot lists saved conversations
-
 **State Storage:**
 ```json
 {
   "conversation_id": "uuid",
-  "timestamp": "2026-01-11T17:50:00Z",
+  "timestamp": "2026-01-11T17:50:00Z", 
   "current_agent": "agent-name",
   "messages": [
     {"user": "message", "bot": "response"},
@@ -59,7 +78,7 @@ Bot: Agent 'my-agent' is now active
 }
 ```
 
-### 3. Bot Restart Handler
+### 4. Bot Restart Handler
 
 **Startup Behavior:**
 - On initial bot startup: Start kiro-cli (defaults to `kiro_default` agent)
@@ -86,6 +105,25 @@ Bot: Agent 'my-agent' is now active
 - Bot starts kiro-cli without --agent flag (uses `kiro_default`)
 - Bot uses `--agent <name>` flag when switching to custom or built-in agents
 - Bot restores last used agent on restart if auto-save exists
+
+## Command Interception Logic
+
+### Message Processing Flow
+```
+1. User sends message to bot
+2. Bot checks if message starts with intercepted commands:
+   - /agent create|list|swap|delete or \agent create|list|swap|delete
+   - /chat save|load|list or \chat save|load|list
+3. If intercepted: Bot handles internally, doesn't pass to kiro-cli
+4. If not intercepted: Bot passes message to kiro-cli as normal
+```
+
+### Interception Implementation
+- Bot maintains list of intercepted command patterns for both "/" and "\" prefixes
+- Bot uses regex matching to identify commands with either prefix
+- Bot normalizes "\" to "/" internally for consistent processing
+- Bot extracts command parameters for processing
+- Bot provides appropriate responses without kiro-cli involvement
 
 ## Implementation Considerations
 
@@ -181,7 +219,8 @@ Bot: Agent 'my-agent' is now active
 
 ### Agent Creation Flow
 ```
-User -> Bot: /create_agent my-agent
+User -> Bot: /agent create my-agent
+Bot -> Bot: [Intercepts command]
 Bot -> User: What's the description?
 User -> Bot: [description]
 Bot -> User: What are the instructions?
@@ -192,9 +231,19 @@ Bot -> Process: Start kiro-cli --agent my-agent
 Bot -> User: Agent 'my-agent' is now active
 ```
 
+### Command Interception Flow
+```
+User -> Bot: /agent list  (or \agent list)
+Bot -> Bot: [Intercepts command, doesn't pass to kiro-cli]
+Bot -> FileSystem: Read ~/.kiro/agents/
+Bot -> Bot: Combine with built-in agents list
+Bot -> User: Available agents: kiro_default, kiro_planner, dicio, my-agent, other-agent
+```
+
 ### Bot Restart Flow
 ```
-User -> Bot: /switch_agent other-agent
+User -> Bot: /agent swap other-agent  (or \agent swap other-agent)
+Bot -> Bot: [Intercepts command]
 Bot -> FileSystem: Save conversation to ~/.kiro/bot_conversations/__auto_save__.json
 Bot -> Process: Kill current kiro-cli
 Bot -> Process: Start kiro-cli --agent other-agent

@@ -1,15 +1,86 @@
 # Telegram Kiro Bot
 
-A Python service that bridges Telegram with Kiro CLI, maintaining persistent conversation context.
+A Python service that bridges Telegram with Kiro CLI, maintaining persistent conversation context and providing agent management capabilities.
 
 ## Features
 
 - **Persistent Session**: Maintains a single Kiro CLI session across all messages
+- **Agent Management**: Create, switch, and manage Kiro agents without CLI restarts
+- **Conversation Persistence**: Save and restore conversation sessions
 - **Auto Tool Trust**: Automatically trusts all tools to avoid prompts
 - **Clean Output**: Strips ANSI escape codes for Telegram compatibility  
 - **User Filtering**: Only responds to authorized user (configurable)
 - **Error Handling**: Robust error handling and automatic recovery
 - **Progress Updates**: Shows typing indicators during processing
+
+## Agent Management Commands
+
+### Creating Agents
+```
+/agent create <name>
+```
+Interactively create a new global agent. The bot will prompt for:
+- Agent description
+- Agent instructions
+
+Example:
+```
+/agent create my_helper
+> Creating agent 'my_helper'...
+> What's the agent description?
+A helpful coding assistant
+> What instructions should the agent have?  
+You are a helpful coding assistant focused on Python development.
+> ✅ Agent 'my_helper' created successfully!
+```
+
+### Managing Agents
+```
+/agent list           # List all available agents (built-in + custom)
+/agent swap <name>    # Switch to a different agent
+```
+
+### Conversation Management
+```
+/save_chat <name>     # Save current conversation state
+/load_chat <name>     # Load and restore a saved conversation
+/list_chats           # List all saved conversations
+```
+
+## How Agent Management Works
+
+1. **Agent Creation**: Creates JSON files in `~/.kiro/agents/` with standardized structure
+2. **Agent Switching**: Automatically saves current state, restarts kiro-cli with new agent
+3. **State Persistence**: Conversation history and agent state saved to `~/.kiro/bot_conversations/`
+4. **Auto-Recovery**: Bot automatically restores previous session on restart
+
+## Agent File Structure
+
+Custom agents are stored as JSON files in `~/.kiro/agents/`:
+```json
+{
+  "name": "agent_name",
+  "description": "Agent description",
+  "instructions": "System instructions for the agent",
+  "tools": [],
+  "created_at": 1704067200.0,
+  "version": "1.0"
+}
+```
+
+## Conversation State Structure
+
+Conversation states are stored in `~/.kiro/bot_conversations/`:
+```json
+{
+  "current_agent": "agent_name",
+  "timestamp": 1704067200.0,
+  "conversation_history": [
+    {"user": "message", "bot": "response", "timestamp": 1704067200.0}
+  ],
+  "working_directory": "/home/mark/git/remote-kiro"
+}
+```
 
 ## Setup
 
