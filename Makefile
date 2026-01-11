@@ -1,4 +1,4 @@
-.PHONY: setup test run clean install service
+.PHONY: setup test test-setup test-bot run clean install service
 
 # Python virtual environment
 VENV = venv
@@ -15,8 +15,16 @@ $(VENV)/bin/activate: requirements.txt
 	$(PIP) install -r requirements.txt
 	touch $(VENV)/bin/activate
 
+# Install test dependencies
+test-setup: setup
+	$(PIP) install -r tests/requirements.txt
+
 # Run tests
-test: setup
+test: test-setup
+	$(PYTHON) -m pytest tests/ -v --timeout=30
+
+# Run legacy bot test
+test-bot: setup
 	$(PYTHON) test_bot.py
 
 # Run the bot
