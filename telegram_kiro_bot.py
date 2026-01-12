@@ -33,6 +33,7 @@ class KiroSession:
         self.telegram_bot = None
         self.response_buffer = []
         self.last_activity = time.time()
+        self.last_typing_indicator = 0
         self.current_agent = None  # Track current agent
         self.conversation_history = []  # Track conversation for replay
         self.start_session()
@@ -182,6 +183,13 @@ class KiroSession:
         """Handle a single line from Kiro"""
         clean_line = self._strip_ansi(line.strip())
         print(f"[DEBUG] RAW: {repr(clean_line)}")
+        
+        # Send typing indicator every 4 seconds while processing
+        current_time = time.time()
+        if (self.current_chat_id and self.telegram_bot and 
+            current_time - self.last_typing_indicator > 4):
+            self.last_typing_indicator = current_time
+            self.telegram_bot.send_typing_indicator_threadsafe(self.current_chat_id)
         
         # Skip thinking lines and empty lines
         if (re.match(r'^. Thinking\.\.\.$', clean_line) or 
@@ -460,6 +468,8 @@ class TelegramBot:
         # Set chat ID and send to Kiro immediately (non-blocking)
         print(f"[DEBUG] Setting chat_id to {update.effective_chat.id}")
         self.kiro.set_chat_id(update.effective_chat.id)
+        # Reset typing indicator timestamp for new message
+        self.kiro.last_typing_indicator = 0
         print(f"[DEBUG] Sending to Kiro: {message_text}")
         self.kiro.send_to_kiro(message_text)
     
@@ -760,8 +770,15 @@ class TelegramBot:
             "name": name,
             "description": description,
             "prompt": instructions,
+            "mcpServers": {},
+            "tools": ["*"],
+            "toolAliases": {},
+            "allowedTools": [],
             "resources": ["file://~/.kiro/steering/**/*.md"],
-            "tools": [],
+            "hooks": {},
+            "toolsSettings": {},
+            "useLegacyMcpJson": True,
+            "model": None,
             "created_at": time.time(),
             "version": "1.0"
         }
@@ -930,9 +947,34 @@ class TelegramBot:
         else:
             print("[DEBUG] No event loop available yet")
     
+    def send_typing_indicator_threadsafe(self, chat_id):
+        """Send typing indicator to Telegram from thread"""
+        if self.loop:
+            import asyncio
+            future = asyncio.run_coroutine_threadsafe(
+                self._send_typing_async(chat_id), 
+                self.loop
+            )
+            # Don't wait for result to keep it non-blocking
+    
+    async def _send_typing_async(self, chat_id):
+        """Internal async method to send typing indicator"""
+        try:
+            await self.application.bot.send_chat_action(
+                chat_id=chat_id,
+                action=ChatAction.TYPING
+            )
+        except Exception as e:
+            print(f"[DEBUG] Error sending typing indicator: {e}")
+    
     async def _send_message_async(self, chat_id, text):
         """Internal async method to send message"""
         try:
+            # Show typing indicator before sending response
+            await self.application.bot.send_chat_action(
+                chat_id=chat_id,
+                action=ChatAction.TYPING
+            )
             await self.application.bot.send_message(chat_id=chat_id, text=text)
             print("[DEBUG] Response sent successfully")
         except Exception as e:
