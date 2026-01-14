@@ -26,26 +26,42 @@ logger = logging.getLogger(__name__)
 
 class KiroSession:
     def __init__(self):
-        self.process = None
-        self.input_queue = Queue()
-        self.output_queue = Queue()
+        self.agents = {}  # agent_name -> agent_data dict
+        self.active_agent = None
         self.current_chat_id = None
         self.telegram_bot = None
-        self.response_buffer = []
-        self.last_activity = time.time()
         self.last_typing_indicator = 0
-        self.current_agent = None  # Track current agent
-        self.conversation_history = []  # Track conversation for replay
+        self.conversation_history = []
         self.start_session()
+    
+    def _get_agent_data(self, agent_name):
+        """Get or create agent data structure"""
+        if agent_name not in self.agents:
+            self.agents[agent_name] = {
+                'process': None,
+                'input_queue': Queue(),
+                'output_queue': Queue(),
+                'response_buffer': [],
+                'last_activity': time.time(),
+                'last_periodic_send': time.time(),
+                'cached_output': []  # Store output when agent is inactive
+            }
+        return self.agents[agent_name]
     
     def start_session(self, agent_name=None):
         """Start persistent Kiro session with threaded I/O"""
+        if agent_name is None:
+            agent_name = 'kiro_default'
+        
+        # If agent already running, just switch to it
+        if agent_name in self.agents and self.agents[agent_name]['process'] and self.agents[agent_name]['process'].poll() is None:
+            self._switch_to_agent(agent_name)
+            return
+        
         logger.info(f"Starting Kiro session with agent: {agent_name}")
         
         try:
-            # Stop existing session if running
-            if self.process and self.process.poll() is None:
-                self.stop_session()
+            agent_data = self._get_agent_data(agent_name)
             
             env = os.environ.copy()
             env['NO_COLOR'] = '1'
@@ -54,15 +70,12 @@ class KiroSession:
             env['TERM'] = 'dumb'
             env['PATH'] = '/home/mark/.local/bin:' + env.get('PATH', '')
             
-            # Build command with optional agent
+            # Build command with agent
             cmd = ['/home/mark/.local/bin/kiro-cli', 'chat', '--trust-all-tools']
-            if agent_name:
+            if agent_name != 'kiro_default':
                 cmd.extend(['--agent', agent_name])
-                self.current_agent = agent_name
-            else:
-                self.current_agent = 'kiro_default'
             
-            self.process = subprocess.Popen(
+            agent_data['process'] = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -72,124 +85,168 @@ class KiroSession:
                 env=env,
                 cwd='/home/mark/git/remote-kiro'
             )
-            logger.info(f"Kiro process started with PID: {self.process.pid}, agent: {self.current_agent}")
+            logger.info(f"Kiro process started with PID: {agent_data['process'].pid}, agent: {agent_name}")
             
-            # Start I/O threads
-            threading.Thread(target=self._input_thread, daemon=True).start()
-            threading.Thread(target=self._output_thread, daemon=True).start()
-            threading.Thread(target=self._response_processor, daemon=True).start()
-            threading.Thread(target=self._timeout_checker, daemon=True).start()
+            # Start I/O threads for this agent
+            threading.Thread(target=self._input_thread, args=(agent_name,), daemon=True).start()
+            threading.Thread(target=self._output_thread, args=(agent_name,), daemon=True).start()
+            threading.Thread(target=self._response_processor, args=(agent_name,), daemon=True).start()
+            
+            # Start timeout checker if not already running
+            if not hasattr(self, '_timeout_checker_started'):
+                threading.Thread(target=self._timeout_checker, daemon=True).start()
+                self._timeout_checker_started = True
             
             # Trust all tools
-            self.send_to_kiro('/tools trust-all')
+            agent_data['input_queue'].put('/tools trust-all')
             time.sleep(1)
+            
+            # Switch to this agent
+            self.active_agent = agent_name
             
         except Exception as e:
             logger.error(f"Failed to start Kiro session: {e}")
-            self.current_agent = 'kiro_default'  # Fallback
             if self.telegram_bot and self.current_chat_id:
                 self.telegram_bot.send_response_threadsafe(
                     self.current_chat_id, 
                     f"❌ Error starting Kiro session: {e}"
                 )
     
+    def _switch_to_agent(self, agent_name):
+        """Switch active agent and send cached output"""
+        if agent_name not in self.agents:
+            return False
+        
+        self.active_agent = agent_name
+        agent_data = self.agents[agent_name]
+        
+        # Send any cached output from this agent
+        if agent_data['cached_output'] and self.telegram_bot and self.current_chat_id:
+            cached_text = '\n'.join(agent_data['cached_output'])
+            
+            # Snip middle if too large (>4000 chars)
+            if len(cached_text) > 4000:
+                lines = agent_data['cached_output']
+                keep_lines = 20
+                if len(lines) > keep_lines * 2:
+                    top = '\n'.join(lines[:keep_lines])
+                    bottom = '\n'.join(lines[-keep_lines:])
+                    cached_text = f"{top}\n\n... ({len(lines) - keep_lines * 2} lines omitted) ...\n\n{bottom}"
+            
+            self.telegram_bot.send_response_threadsafe(
+                self.current_chat_id,
+                f"📋 Cached output from '{agent_name}':\n\n{cached_text}"
+            )
+            agent_data['cached_output'] = []
+        
+        return True
+    
     def stop_session(self):
-        """Stop the current Kiro session"""
+        """Stop all Kiro sessions"""
         try:
-            if self.process and self.process.poll() is None:
-                print(f"[DEBUG] Stopping Kiro process {self.process.pid}")
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    print("[DEBUG] Force killing Kiro process")
-                    self.process.kill()
-                    self.process.wait()
-            self.process = None
+            for agent_name, agent_data in self.agents.items():
+                if agent_data['process'] and agent_data['process'].poll() is None:
+                    print(f"[DEBUG] Stopping Kiro process {agent_data['process'].pid} for agent {agent_name}")
+                    agent_data['process'].terminate()
+                    try:
+                        agent_data['process'].wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        print(f"[DEBUG] Force killing Kiro process for agent {agent_name}")
+                        agent_data['process'].kill()
+                        agent_data['process'].wait()
+                agent_data['process'] = None
         except Exception as e:
-            print(f"[ERROR] Error stopping session: {e}")
-            self.process = None
+            print(f"[ERROR] Error stopping sessions: {e}")
     
     def restart_session(self, agent_name=None):
-        """Restart Kiro session with optional different agent"""
-        print(f"[DEBUG] Restarting session with agent: {agent_name}")
-        try:
-            self.stop_session()
-            time.sleep(1)  # Brief pause
-            self.start_session(agent_name)
-        except Exception as e:
-            print(f"[ERROR] Error restarting session: {e}")
-            # Try fallback to default agent
-            try:
-                self.start_session()
-            except Exception as fallback_error:
-                print(f"[ERROR] Fallback session start failed: {fallback_error}")
-                if self.telegram_bot and self.current_chat_id:
-                    self.telegram_bot.send_response_threadsafe(
-                        self.current_chat_id,
-                        "❌ Critical error: Unable to start Kiro session. Please restart the bot."
-                    )
+        """Restart Kiro session with optional different agent - now just switches"""
+        if agent_name is None:
+            agent_name = 'kiro_default'
+        print(f"[DEBUG] Switching to agent: {agent_name}")
+        self.start_session(agent_name)
     
-    def _input_thread(self):
+    def _input_thread(self, agent_name):
         """Thread to handle input to Kiro"""
-        while self.process and self.process.poll() is None:
+        agent_data = self.agents[agent_name]
+        while agent_data['process'] and agent_data['process'].poll() is None:
             try:
-                command = self.input_queue.get(timeout=1)
+                command = agent_data['input_queue'].get(timeout=1)
                 if command:
-                    print(f"[DEBUG] SENDING: {repr(command)}")
-                    self.process.stdin.write(command + '\n')
-                    self.process.stdin.flush()
+                    print(f"[DEBUG] SENDING to {agent_name}: {repr(command)}")
+                    agent_data['process'].stdin.write(command + '\n')
+                    agent_data['process'].stdin.flush()
             except Empty:
                 continue
             except Exception as e:
-                print(f"[DEBUG] Input thread error: {e}")
+                print(f"[DEBUG] Input thread error for {agent_name}: {e}")
                 break
     
-    def _output_thread(self):
+    def _output_thread(self, agent_name):
         """Thread to handle output from Kiro"""
-        while self.process and self.process.poll() is None:
+        agent_data = self.agents[agent_name]
+        while agent_data['process'] and agent_data['process'].poll() is None:
             try:
-                line = self.process.stdout.readline()
+                line = agent_data['process'].stdout.readline()
                 if line:
-                    self.output_queue.put(line)
+                    agent_data['output_queue'].put(line)
             except Exception as e:
-                print(f"[DEBUG] Output thread error: {e}")
+                print(f"[DEBUG] Output thread error for {agent_name}: {e}")
                 break
     
     def _timeout_checker(self):
         """Check for response timeout and send buffered content"""
         while True:
             time.sleep(2)  # Check every 2 seconds
-            if (self.response_buffer and 
-                time.time() - self.last_activity > 3 and  # 3 seconds of inactivity
-                self.current_chat_id):
-                print("[DEBUG] Timeout detected, sending buffered response")
-                self._send_buffered_response()
+            current_time = time.time()
+            
+            if not self.active_agent or self.active_agent not in self.agents:
+                continue
+            
+            agent_data = self.agents[self.active_agent]
+            
+            # Send buffered content if we have a 3-second timeout OR 20 seconds since last send
+            should_send_timeout = (agent_data['response_buffer'] and 
+                                 current_time - agent_data['last_activity'] > 3 and  
+                                 self.current_chat_id)
+            
+            should_send_periodic = (agent_data['response_buffer'] and 
+                                  current_time - agent_data['last_periodic_send'] > 20 and
+                                  self.current_chat_id)
+            
+            if should_send_timeout:
+                print(f"[DEBUG] Timeout detected for {self.active_agent}, sending buffered response")
+                self._send_buffered_response(self.active_agent)
+            elif should_send_periodic:
+                print(f"[DEBUG] 20-second periodic update for {self.active_agent}, sending buffered response")
+                self._send_buffered_response(self.active_agent)
     
-    def _response_processor(self):
+    def _response_processor(self, agent_name):
         """Thread to process Kiro output and send to Telegram"""
+        agent_data = self.agents[agent_name]
         while True:
             try:
-                line = self.output_queue.get(timeout=1)
-                self.last_activity = time.time()  # Update activity timestamp
-                self._handle_line(line)
+                line = agent_data['output_queue'].get(timeout=1)
+                agent_data['last_activity'] = time.time()
+                self._handle_line(agent_name, line)
             except Empty:
                 continue
             except Exception as e:
-                print(f"[DEBUG] Response processor error: {e}")
+                print(f"[DEBUG] Response processor error for {agent_name}: {e}")
                 break
     
-    def _handle_line(self, line):
+    def _handle_line(self, agent_name, line):
         """Handle a single line from Kiro"""
+        agent_data = self.agents[agent_name]
         clean_line = self._strip_ansi(line.strip())
-        print(f"[DEBUG] RAW: {repr(clean_line)}")
+        print(f"[DEBUG] {agent_name} RAW: {repr(clean_line)}")
         
-        # Send typing indicator every 4 seconds while processing
-        current_time = time.time()
-        if (self.current_chat_id and self.telegram_bot and 
-            current_time - self.last_typing_indicator > 4):
-            self.last_typing_indicator = current_time
-            self.telegram_bot.send_typing_indicator_threadsafe(self.current_chat_id)
+        # Send typing indicator every 4 seconds while processing (only for active agent)
+        if agent_name == self.active_agent:
+            current_time = time.time()
+            if (self.current_chat_id and self.telegram_bot and 
+                current_time - self.last_typing_indicator > 4):
+                self.last_typing_indicator = current_time
+                self.telegram_bot.send_typing_indicator_threadsafe(self.current_chat_id)
         
         # Skip thinking lines and empty lines
         if (re.match(r'^. Thinking\.\.\.$', clean_line) or 
@@ -198,45 +255,82 @@ class KiroSession:
             return
         
         # Handle prompts automatically
-        if self._handle_auto_trust(line):
+        if self._handle_auto_trust(agent_name, line):
             return
         
         # Check if this is end of response (prompt returned)
-        # Look for various prompt patterns
         if (clean_line.strip() == '>' or 
             clean_line.strip() == '!>' or
             clean_line.strip().endswith('> ') or
             clean_line.strip().endswith('!> ') or
             (len(clean_line.strip()) <= 3 and ('>' in clean_line or '!>' in clean_line))):
             print(f"[DEBUG] Detected end of response with prompt: {repr(clean_line)}")
-            self._send_buffered_response()
+            self._send_buffered_response(agent_name)
             return
         
         # Extract content after prompt marker if present
+        content = None
         if '> ' in clean_line and not clean_line.strip().endswith('> '):
             parts = clean_line.split('> ', 1)
             if len(parts) > 1 and parts[1].strip():
-                print(f"[DEBUG] Adding to buffer (after >): {repr(parts[1].strip())}")
-                self.response_buffer.append(parts[1].strip())
+                content = parts[1].strip()
         elif '!> ' in clean_line and not clean_line.strip().endswith('!> '):
             parts = clean_line.split('!> ', 1)
             if len(parts) > 1 and parts[1].strip():
-                print(f"[DEBUG] Adding to buffer (after !>): {repr(parts[1].strip())}")
-                self.response_buffer.append(parts[1].strip())
+                content = parts[1].strip()
         elif clean_line and not clean_line.strip().endswith('> ') and not clean_line.strip().endswith('!> '):
-            print(f"[DEBUG] Adding to buffer (full line): {repr(clean_line)}")
-            self.response_buffer.append(clean_line)
-    
-    def _send_buffered_response(self):
-        """Send accumulated response to Telegram"""
-        print(f"[DEBUG] _send_buffered_response called. Buffer: {len(self.response_buffer)} lines, chat_id: {self.current_chat_id}")
+            content = clean_line
         
-        if not self.response_buffer or not self.current_chat_id or not self.telegram_bot:
-            print(f"[DEBUG] Skipping send - buffer empty: {not self.response_buffer}, no chat_id: {not self.current_chat_id}, no bot: {not self.telegram_bot}")
+        if content:
+            print(f"[DEBUG] Adding to buffer for {agent_name}: {repr(content)}")
+            # If this is the active agent, add to response buffer
+            # Otherwise, add to cached output
+            if agent_name == self.active_agent:
+                agent_data['response_buffer'].append(content)
+            else:
+                agent_data['cached_output'].append(content)
+                # Save to file if cached output gets large (>100 lines)
+                if len(agent_data['cached_output']) > 100:
+                    self._save_cached_output_to_file(agent_name)
+    
+    def _save_cached_output_to_file(self, agent_name):
+        """Save large cached output to file"""
+        agent_data = self.agents[agent_name]
+        if not agent_data['cached_output']:
             return
         
-        response = '\n'.join(self.response_buffer)
-        self.response_buffer = []
+        cache_dir = Path.home() / ".kiro" / "bot_agent_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / f"{agent_name}_{int(time.time())}.txt"
+        
+        with open(cache_file, 'w') as f:
+            f.write('\n'.join(agent_data['cached_output']))
+        
+        # Keep only summary in memory
+        agent_data['cached_output'] = [
+            f"[Large output saved to {cache_file}]",
+            f"First lines: {agent_data['cached_output'][0]}",
+            "...",
+            f"Last lines: {agent_data['cached_output'][-1]}"
+        ]
+    
+    def _send_buffered_response(self, agent_name):
+        """Send accumulated response to Telegram"""
+        agent_data = self.agents[agent_name]
+        print(f"[DEBUG] _send_buffered_response called for {agent_name}. Buffer: {len(agent_data['response_buffer'])} lines, chat_id: {self.current_chat_id}")
+        
+        if not agent_data['response_buffer'] or not self.current_chat_id or not self.telegram_bot:
+            print(f"[DEBUG] Skipping send - buffer empty or no chat")
+            return
+        
+        # Only send if this is the active agent
+        if agent_name != self.active_agent:
+            print(f"[DEBUG] Agent {agent_name} is not active, caching output")
+            return
+        
+        response = '\n'.join(agent_data['response_buffer'])
+        agent_data['response_buffer'] = []
+        agent_data['last_periodic_send'] = time.time()
         
         # Track bot response in conversation history
         if self.conversation_history and response.strip():
@@ -253,16 +347,17 @@ class KiroSession:
         # Send response using thread-safe async call
         self.telegram_bot.send_response_threadsafe(self.current_chat_id, response or "No response")
     
-    def _handle_auto_trust(self, line):
+    def _handle_auto_trust(self, agent_name, line):
         """Auto-handle trust prompts"""
+        agent_data = self.agents[agent_name]
         if '[y/n/t]' in line:
-            self.send_to_kiro('t')
+            agent_data['input_queue'].put('t')
             return True
         elif '(y/n)' in line or '[y/N]' in line:
-            self.send_to_kiro('y')
+            agent_data['input_queue'].put('y')
             return True
         elif '!>!>' in line or '!>' in line:
-            self.send_to_kiro('')
+            agent_data['input_queue'].put('')
             return True
         return False
     
@@ -272,7 +367,11 @@ class KiroSession:
         return ansi_escape.sub('', text)
     
     def send_to_kiro(self, message):
-        """Send message to Kiro (non-blocking)"""
+        """Send message to active Kiro agent (non-blocking)"""
+        if not self.active_agent or self.active_agent not in self.agents:
+            print("[DEBUG] No active agent to send message to")
+            return
+        
         # Map backslash to forward slash
         if message.startswith('\\'):
             message = '/' + message[1:]
@@ -281,7 +380,8 @@ class KiroSession:
         if not message.startswith('/'):
             self.conversation_history.append({"user": message, "timestamp": time.time()})
         
-        self.input_queue.put(message)
+        agent_data = self.agents[self.active_agent]
+        agent_data['input_queue'].put(message)
     
     def save_state(self, name="__auto_save__"):
         """Save current conversation state to file"""
@@ -290,7 +390,7 @@ class KiroSession:
             state_dir.mkdir(parents=True, exist_ok=True)
             
             state = {
-                "current_agent": self.current_agent,
+                "active_agent": self.active_agent,
                 "timestamp": time.time(),
                 "conversation_history": self.conversation_history,
                 "working_directory": "/home/mark/git/remote-kiro"
@@ -327,19 +427,20 @@ class KiroSession:
             if not isinstance(state, dict):
                 raise ValueError("Invalid state format")
             
-            self.current_agent = state.get("current_agent", "kiro_default")
+            # Support both old and new format
+            self.active_agent = state.get("active_agent") or state.get("current_agent", "kiro_default")
             self.conversation_history = state.get("conversation_history", [])
             
             # Validate conversation history
             if not isinstance(self.conversation_history, list):
                 self.conversation_history = []
             
-            print(f"[DEBUG] State loaded from {state_file}, agent: {self.current_agent}")
+            print(f"[DEBUG] State loaded from {state_file}, agent: {self.active_agent}")
             return True
         except Exception as e:
             print(f"[ERROR] Error loading state: {e}")
             # Reset to defaults on error
-            self.current_agent = "kiro_default"
+            self.active_agent = "kiro_default"
             self.conversation_history = []
             return False
     
@@ -355,29 +456,21 @@ class KiroSession:
                 time.sleep(0.5)  # Brief pause between messages
     
     def restart_with_agent(self, agent_name):
-        """Restart kiro-cli with specified agent"""
+        """Switch to agent (starts if not running)"""
         try:
             # Save current state
             self.save_state()
             
-            # Stop current session
-            self.stop_session()
-            
-            # Brief pause to ensure clean shutdown
-            time.sleep(0.5)
-            
-            # Start new session with agent
+            # Start or switch to agent
             self.start_session(agent_name)
             
-            # Wait for initialization and send initial trust command
+            # Wait for initialization
             time.sleep(1.5)
-            self.send_to_kiro('/tools trust-all')
-            time.sleep(0.5)
             
-            print(f"[DEBUG] Restarted with agent: {agent_name}")
+            print(f"[DEBUG] Switched to agent: {agent_name}")
             return True
         except Exception as e:
-            print(f"[ERROR] Error restarting with agent: {e}")
+            print(f"[ERROR] Error switching to agent: {e}")
             return False
     
     def save_conversation(self, name):
@@ -387,9 +480,9 @@ class KiroSession:
     def load_conversation(self, name):
         """Load conversation with custom name"""
         if self.load_state(name):
-            # Restart with the loaded agent
-            if self.current_agent:
-                self.restart_with_agent(self.current_agent)
+            # Switch to the loaded agent
+            if self.active_agent:
+                self.start_session(self.active_agent)
             return True
         return False
     
@@ -409,8 +502,8 @@ class TelegramBot:
         
         # Try to restore previous session
         if self.kiro.load_state():
-            print(f"[DEBUG] Restored previous session with agent: {self.kiro.current_agent}")
-            self.kiro.restart_session(self.kiro.current_agent)
+            print(f"[DEBUG] Restored previous session with agent: {self.kiro.active_agent}")
+            self.kiro.start_session(self.kiro.active_agent)
         
         self.application = Application.builder().token(token).build()
         self.loop = None
@@ -600,19 +693,19 @@ class TelegramBot:
                 for agent_file in agents_dir.glob("*.json"):
                     custom_agents.append(agent_file.stem)
             print(f"[DEBUG] Custom agents: {custom_agents}")
-            print(f"[DEBUG] Current agent: {self.kiro.current_agent}")
+            print(f"[DEBUG] Active agent: {self.kiro.active_agent}")
             
             # Format response (simplified, no markdown)
             response = "Available agents:\n\n"
             response += "Built-in agents:\n"
             for agent in builtin_agents:
-                current_marker = " <- current" if agent == self.kiro.current_agent else ""
+                current_marker = " <- active" if agent == self.kiro.active_agent else ""
                 response += f"• {agent}{current_marker}\n"
             
             if custom_agents:
                 response += "\nCustom agents:\n"
                 for agent in sorted(custom_agents):
-                    current_marker = " <- current" if agent == self.kiro.current_agent else ""
+                    current_marker = " <- active" if agent == self.kiro.active_agent else ""
                     response += f"• {agent}{current_marker}\n"
             
             print(f"[DEBUG] Final response length: {len(response)}")
@@ -778,9 +871,7 @@ class TelegramBot:
             "hooks": {},
             "toolsSettings": {},
             "useLegacyMcpJson": True,
-            "model": None,
-            "created_at": time.time(),
-            "version": "1.0"
+            "model": None
         }
     
     async def create_agent(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -841,10 +932,10 @@ class TelegramBot:
             self.kiro.restart_session(agent_name)
             
             # Verify the agent switch worked
-            if self.kiro.current_agent == agent_name:
+            if self.kiro.active_agent == agent_name:
                 await update.message.reply_text(f"✅ Now using agent: {agent_name}")
             else:
-                await update.message.reply_text(f"⚠️ Agent switch may have failed. Current agent: {self.kiro.current_agent}")
+                await update.message.reply_text(f"⚠️ Agent switch may have failed. Active agent: {self.kiro.active_agent}")
                 
         except Exception as e:
             await update.message.reply_text(f"❌ Error switching agent: {e}")
@@ -886,7 +977,7 @@ class TelegramBot:
             await update.message.reply_text(f"Loading conversation '{name}'...")
             
             # Restart with saved agent
-            self.kiro.restart_session(self.kiro.current_agent)
+            self.kiro.restart_session(self.kiro.active_agent)
             
             # Replay conversation
             self.kiro.replay_conversation()
