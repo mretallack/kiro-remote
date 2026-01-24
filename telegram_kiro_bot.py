@@ -834,6 +834,14 @@ class TelegramBot:
                 with open(agent_file, 'w') as f:
                     json.dump(agent_data, f, indent=2)
                 
+                # Create agent-specific steering directory and overview.md
+                steering_dir = agents_dir / state['agent_name'] / "steering"
+                steering_dir.mkdir(parents=True, exist_ok=True)
+                
+                overview_file = steering_dir / "overview.md"
+                with open(overview_file, 'w') as f:
+                    f.write(f"# {state['agent_name']}\n\n{state['description']}\n")
+                
                 await update.message.reply_text(
                     f"✅ Agent '{state['agent_name']}' created successfully!\n\n"
                     f"📝 Description: {state['description']}\n"
@@ -867,7 +875,10 @@ class TelegramBot:
             "tools": ["*"],
             "toolAliases": {},
             "allowedTools": [],
-            "resources": ["file://~/.kiro/steering/**/*.md"],
+            "resources": [
+                "file://~/.kiro/steering/**/*.md",
+                f"file://~/.kiro/agents/{name}/steering/*.md"
+            ],
             "hooks": {},
             "toolsSettings": {},
             "useLegacyMcpJson": True,
