@@ -386,6 +386,7 @@ class KiroSession:
     def save_state(self, name="__auto_save__"):
         """Save current conversation state to file"""
         try:
+            print(f"[DEBUG] save_state called with name: {name}")
             state_dir = Path.home() / ".kiro" / "bot_conversations"
             state_dir.mkdir(parents=True, exist_ok=True)
             
@@ -397,6 +398,7 @@ class KiroSession:
             }
             
             state_file = state_dir / f"{name}.json"
+            print(f"[DEBUG] Saving to: {state_file}")
             
             # Create backup if file exists
             if state_file.exists():
@@ -410,6 +412,8 @@ class KiroSession:
             return True
         except Exception as e:
             print(f"[ERROR] Error saving state: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def load_state(self, name="__auto_save__"):
@@ -514,11 +518,8 @@ class TelegramBot:
         self.application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
         )
-        # Note: Agent commands are now handled via interception (/agent create|list|swap|delete)
-        # Chat commands still use old format for now
-        self.application.add_handler(CommandHandler("save_chat", self.save_chat))
-        self.application.add_handler(CommandHandler("load_chat", self.load_chat))
-        self.application.add_handler(CommandHandler("list_chats", self.list_chats))
+        # Note: Agent and chat commands are handled via interception
+        # This allows backslash prefix support (\agent, \chat)
         
         # Attachment handlers
         self.application.add_handler(MessageHandler(filters.PHOTO, self.handle_photo))
@@ -863,11 +864,13 @@ class TelegramBot:
     async def save_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, chat_name: str):
         """Handle intercepted /chat save command"""
         try:
+            print(f"[DEBUG] save_chat called with name: {chat_name}")
             if self.kiro.save_conversation(chat_name):
                 await update.message.reply_text(f"✅ Conversation saved as '{chat_name}'")
             else:
                 await update.message.reply_text(f"❌ Failed to save conversation")
         except Exception as e:
+            print(f"[ERROR] Exception in save_chat: {e}")
             await update.message.reply_text(f"❌ Error saving conversation: {e}")
     
     async def load_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE, chat_name: str):
@@ -1065,85 +1068,7 @@ class TelegramBot:
             except Exception as fallback_error:
                 await update.message.reply_text(f"💥 Critical error: {fallback_error}")
     
-    async def save_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /save_chat command"""
-        if update.effective_user.username != self.authorized_user:
-            return
-        
-        args = context.args
-        if not args:
-            await update.message.reply_text("Usage: /save_chat <name>")
-            return
-        
-        name = args[0]
-        if self.kiro.save_state(name):
-            await update.message.reply_text(f"Conversation saved as '{name}'")
-        else:
-            await update.message.reply_text("Error saving conversation")
-    
-    async def load_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /load_chat command"""
-        if update.effective_user.username != self.authorized_user:
-            return
-        
-        args = context.args
-        if not args:
-            await update.message.reply_text("Usage: /load_chat <name>")
-            return
-        
-        name = args[0]
-        if self.kiro.load_state(name):
-            await update.message.reply_text(f"Loading conversation '{name}'...")
-            
-            # Restart with saved agent
-            self.kiro.restart_session(self.kiro.active_agent)
-            
-            # Replay conversation
-            self.kiro.replay_conversation()
-            
-            await update.message.reply_text(f"Conversation '{name}' restored")
-        else:
-            await update.message.reply_text(f"Error loading conversation '{name}'")
-    
-    async def list_chats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /list_chats command"""
-        if update.effective_user.username != self.authorized_user:
-            return
-        
-        try:
-            state_dir = Path.home() / ".kiro" / "bot_conversations"
-            if not state_dir.exists():
-                await update.message.reply_text("No saved conversations found")
-                return
-            
-            chat_files = list(state_dir.glob("*.json"))
-            if not chat_files:
-                await update.message.reply_text("No saved conversations found")
-                return
-            
-            chat_list = []
-            for chat_file in chat_files:
-                name = chat_file.stem
-                if name == "__auto_save__":
-                    continue
-                
-                try:
-                    with open(chat_file, 'r') as f:
-                        state = json.load(f)
-                    timestamp = state.get("timestamp", 0)
-                    agent = state.get("current_agent", "unknown")
-                    date_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(timestamp))
-                    chat_list.append(f"• {name} ({agent}) - {date_str}")
-                except:
-                    chat_list.append(f"• {name} (corrupted)")
-            
-            if chat_list:
-                await update.message.reply_text("Saved conversations:\n" + "\n".join(chat_list))
-            else:
-                await update.message.reply_text("No saved conversations found")
-        except Exception as e:
-            await update.message.reply_text(f"Error: {e}")
-    
+
     def send_response_threadsafe(self, chat_id, text):
         """Send response to Telegram from thread"""
         print(f"[DEBUG] Thread-safe send for chat {chat_id}: {text[:100]}...")

@@ -85,9 +85,9 @@ You are a helpful coding assistant focused on Python development.
 
 ### Conversation Management
 ```
-\save_chat <name>     # Save current conversation state
-\load_chat <name>     # Load and restore a saved conversation
-\list_chats           # List all saved conversations
+\chat save <name>     # Save current conversation state
+\chat load <name>     # Load and restore a saved conversation
+\chat list            # List all saved conversations
 ```
 
 ## How Agent Management Works
