@@ -56,9 +56,11 @@ Files are saved with the pattern: `{timestamp}_{user_id}_{filename}`
 
 ## Agent Management Commands
 
+**Note:** Telegram bot commands use backslash (`\`) prefix, not forward slash (`/`).
+
 ### Creating Agents
 ```
-/agent create <name>
+\agent create <name>
 ```
 Interactively create a new global agent. The bot will prompt for:
 - Agent description
@@ -66,7 +68,7 @@ Interactively create a new global agent. The bot will prompt for:
 
 Example:
 ```
-/agent create my_helper
+\agent create my_helper
 > Creating agent 'my_helper'...
 > What's the agent description?
 A helpful coding assistant
@@ -77,15 +79,15 @@ You are a helpful coding assistant focused on Python development.
 
 ### Managing Agents
 ```
-/agent list           # List all available agents (built-in + custom)
-/agent swap <name>    # Switch to a different agent
+\agent list           # List all available agents (built-in + custom)
+\agent swap <name>    # Switch to a different agent
 ```
 
 ### Conversation Management
 ```
-/save_chat <name>     # Save current conversation state
-/load_chat <name>     # Load and restore a saved conversation
-/list_chats           # List all saved conversations
+\save_chat <name>     # Save current conversation state
+\load_chat <name>     # Load and restore a saved conversation
+\list_chats           # List all saved conversations
 ```
 
 ## How Agent Management Works
