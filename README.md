@@ -2,6 +2,15 @@
 
 A Python service that bridges Telegram with Kiro CLI, maintaining persistent conversation context and providing agent management capabilities.
 
+## ⚠️ Security Warning
+
+**This bot runs Kiro CLI with full system permissions (`--trust-all-tools`).** Kiro can execute commands, modify files, and access your system resources. Only use this bot:
+- On systems you control
+- With trusted Telegram users (configure `authorized_user` in settings)
+- When you understand the security implications
+
+**The author is not responsible for any damage, data loss, or security issues that may occur from running this software on your system.** Use at your own risk.
+
 ## Features
 
 - **Persistent Session**: Maintains a single Kiro CLI session across all messages
