@@ -491,9 +491,11 @@ class KiroSession:
         self.current_chat_id = chat_id
 
 class TelegramBot:
-    def __init__(self, token, authorized_user):
+    def __init__(self, token, authorized_user, attachments_dir=None):
         self.token = token
         self.authorized_user = authorized_user
+        self.attachments_dir = Path(attachments_dir or '~/.kiro/bot_attachments').expanduser()
+        self._setup_attachments_dir()
         self.kiro = KiroSession()
         self.kiro.telegram_bot = self
         
@@ -517,6 +519,112 @@ class TelegramBot:
         self.application.add_handler(CommandHandler("save_chat", self.save_chat))
         self.application.add_handler(CommandHandler("load_chat", self.load_chat))
         self.application.add_handler(CommandHandler("list_chats", self.list_chats))
+        
+        # Attachment handlers
+        self.application.add_handler(MessageHandler(filters.PHOTO, self.handle_photo))
+        self.application.add_handler(MessageHandler(filters.Document.ALL, self.handle_document))
+    
+    def _setup_attachments_dir(self):
+        """Create attachments directory if it doesn't exist"""
+        try:
+            self.attachments_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
+            logger.info(f"Attachments directory ready: {self.attachments_dir}")
+        except Exception as e:
+            logger.error(f"Failed to create attachments directory: {e}")
+            raise
+    
+    def _sanitize_filename(self, filename):
+        """Remove dangerous characters from filename"""
+        safe = re.sub(r'[/\\:*?"<>|]', '_', filename)
+        safe = safe.replace(' ', '_')
+        return safe[:255]
+    
+    def _generate_attachment_path(self, user_id, filename):
+        """Generate unique file path for attachment"""
+        timestamp = int(time.time())
+        safe_filename = self._sanitize_filename(filename)
+        unique_filename = f"{timestamp}_{user_id}_{safe_filename}"
+        return self.attachments_dir / unique_filename
+    
+    def _format_attachment_message(self, caption, file_path):
+        """Format message with attachment info for Kiro CLI"""
+        context = "Note: The user sent this via Telegram. The attachment was downloaded to the local filesystem at the path below."
+        if caption:
+            return f"{context}\\n\\n{caption}\\n\\nThe attachment is {file_path}"
+        return f"{context}\\n\\nThe attachment is {file_path}"
+    
+    async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle photo uploads"""
+        username = update.effective_user.username
+        if username != self.authorized_user:
+            return
+        
+        try:
+            # Get highest resolution photo
+            photo = update.message.photo[-1]
+            file = await context.bot.get_file(photo.file_id)
+            
+            # Generate path and download
+            user_id = update.effective_user.id
+            filename = f"photo_{photo.file_id[-8:]}.jpg"
+            file_path = self._generate_attachment_path(user_id, filename)
+            
+            await file.download_to_drive(file_path)
+            logger.info(f"Downloaded photo to {file_path}")
+            
+            # Format message and send to Kiro
+            caption = update.message.caption or ""
+            message = self._format_attachment_message(caption, str(file_path))
+            message = message.replace('\n', '\\n')
+            
+            # Send to Kiro CLI using existing message handling
+            chat_id = update.effective_chat.id
+            self.kiro.set_chat_id(chat_id)
+            self.kiro.last_typing_indicator = 0
+            self.kiro.send_to_kiro(message)
+            
+            # Show typing indicator
+            await update.effective_chat.send_action(ChatAction.TYPING)
+            
+        except Exception as e:
+            logger.error(f"Error handling photo: {e}")
+            await update.message.reply_text(f"❌ Failed to process photo: {e}")
+    
+    async def handle_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle document uploads"""
+        username = update.effective_user.username
+        if username != self.authorized_user:
+            return
+        
+        try:
+            document = update.message.document
+            file = await context.bot.get_file(document.file_id)
+            
+            # Generate path and download
+            user_id = update.effective_user.id
+            filename = document.file_name or f"document_{document.file_id[-8:]}"
+            file_path = self._generate_attachment_path(user_id, filename)
+            
+            await file.download_to_drive(file_path)
+            logger.info(f"Downloaded document to {file_path}")
+            
+            # Format message and send to Kiro
+            caption = update.message.caption or ""
+            message = self._format_attachment_message(caption, str(file_path))
+            message = message.replace('\n', '\\n')
+            
+            # Send to Kiro CLI using existing message handling
+            chat_id = update.effective_chat.id
+            self.kiro.set_chat_id(chat_id)
+            self.kiro.last_typing_indicator = 0
+            self.kiro.send_to_kiro(message)
+            
+            # Show typing indicator
+            await update.effective_chat.send_action(ChatAction.TYPING)
+            
+        except Exception as e:
+            logger.error(f"Error handling document: {e}")
+            await update.message.reply_text(f"❌ Failed to process document: {e}")
     
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming messages"""
@@ -1093,6 +1201,7 @@ if __name__ == '__main__':
     
     TOKEN = config.get('telegram', 'token')
     AUTHORIZED_USER = config.get('bot', 'authorized_user')
+    ATTACHMENTS_DIR = config.get('bot', 'attachments_dir', fallback='~/.kiro/bot_attachments')
     
-    bot = TelegramBot(TOKEN, AUTHORIZED_USER)
+    bot = TelegramBot(TOKEN, AUTHORIZED_USER, ATTACHMENTS_DIR)
     bot.run()

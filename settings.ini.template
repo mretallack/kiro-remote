@@ -5,3 +5,5 @@ token = YOUR_BOT_TOKEN_HERE
 authorized_user = markretallack
 auto_trust = true
 progress_updates = true
+# Directory for storing downloaded attachments (images, documents, etc.)
+attachments_dir = ~/.kiro/bot_attachments

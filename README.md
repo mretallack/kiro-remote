@@ -7,11 +7,43 @@ A Python service that bridges Telegram with Kiro CLI, maintaining persistent con
 - **Persistent Session**: Maintains a single Kiro CLI session across all messages
 - **Agent Management**: Create, switch, and manage Kiro agents without CLI restarts
 - **Conversation Persistence**: Save and restore conversation sessions
+- **Attachment Support**: Send images and documents to Kiro for analysis
 - **Auto Tool Trust**: Automatically trusts all tools to avoid prompts
 - **Clean Output**: Strips ANSI escape codes for Telegram compatibility  
 - **User Filtering**: Only responds to authorized user (configurable)
 - **Error Handling**: Robust error handling and automatic recovery
 - **Progress Updates**: Shows typing indicators during processing
+
+## Attachment Support
+
+Send images and documents directly to Kiro for analysis, code review, or processing.
+
+### Supported File Types
+- **Photos**: JPEG, PNG, WebP (up to 10 MB)
+- **Documents**: Any file type (up to 20 MB)
+
+### Usage
+Simply send a photo or document to the bot with an optional caption:
+```
+[Send image with caption: "What's in this image?"]
+[Send Python file with caption: "Review this code"]
+[Send document without caption - Kiro will receive the file path]
+```
+
+### Configuration
+Set the attachments directory in `settings.ini`:
+```ini
+[bot]
+attachments_dir = ~/.kiro/bot_attachments
+```
+
+Files are saved with the pattern: `{timestamp}_{user_id}_{filename}`
+
+### How It Works
+1. Bot downloads the attachment to the configured directory
+2. Formats a message: `{your_caption}\n\nThe attachment is {file_path}`
+3. Sends the message to Kiro CLI for processing
+4. Kiro can read, analyze, or process the file as needed
 
 ## Agent Management Commands
 
