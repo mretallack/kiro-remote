@@ -58,30 +58,31 @@ Files are saved with the pattern: `{timestamp}_{user_id}_{filename}`
 
 **Note:** Telegram bot commands use backslash (`\`) prefix, not forward slash (`/`).
 
-### Creating Agents
-```
-\agent create <name>
-```
-Interactively create a new global agent. The bot will prompt for:
-- Agent description
-- Agent instructions
-
-Example:
-```
-\agent create my_helper
-> Creating agent 'my_helper'...
-> What's the agent description?
-A helpful coding assistant
-> What instructions should the agent have?  
-You are a helpful coding assistant focused on Python development.
-> ✅ Agent 'my_helper' created successfully!
-```
-
 ### Managing Agents
 ```
-\agent list           # List all available agents (built-in + custom)
+\agent list           # List all available agents with their working directories
 \agent swap <name>    # Switch to a different agent
 ```
+
+### Configuring Agent Working Directories
+
+Each agent can be configured to start in a specific project directory. Edit `~/.kiro/bot_agent_config.json`:
+
+```json
+{
+  "agents": {
+    "facebook_dev": {
+      "working_directory": "/home/mark/git/facebook"
+    },
+    "kiro_default": {
+      "working_directory": "/home/mark/git/remote-kiro"
+    }
+  },
+  "default_directory": "/home/mark/git/remote-kiro"
+}
+```
+
+When you switch to an agent, Kiro will start in that agent's configured directory. This allows different agents to work on different projects without manual directory changes.
 
 ### Conversation Management
 ```
@@ -92,10 +93,10 @@ You are a helpful coding assistant focused on Python development.
 
 ## How Agent Management Works
 
-1. **Agent Creation**: Creates JSON files in `~/.kiro/agents/` with standardized structure
-2. **Agent Switching**: Automatically saves current state, restarts kiro-cli with new agent
-3. **State Persistence**: Conversation history and agent state saved to `~/.kiro/bot_conversations/`
-4. **Auto-Recovery**: Bot automatically restores previous session on restart
+1. **Agent Configuration**: Maps agents to project directories in `~/.kiro/bot_agent_config.json`
+2. **Agent Switching**: Restarts kiro-cli in the agent's configured working directory
+3. **Directory Validation**: Falls back to default directory if configured path doesn't exist
+4. **Agent Listing**: Shows each agent's working directory for easy reference
 
 ## Agent File Structure
 
