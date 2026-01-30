@@ -4,6 +4,7 @@ import threading
 import time
 import re
 import os
+import signal
 import configparser
 from queue import Queue, Empty
 from telegram import Update
@@ -154,11 +155,22 @@ class KiroSession:
     
     def send_to_kiro(self, message):
         """Send message to Kiro (non-blocking)"""
+        # Handle cancel command
+        if message.strip() == '\\cancel':
+            self.cancel_current_operation()
+            return
+        
         # Map backslash to forward slash
         if message.startswith('\\'):
             message = '/' + message[1:]
         
         self.input_queue.put(message)
+    
+    def cancel_current_operation(self):
+        """Send SIGINT (Ctrl-C) to Kiro process"""
+        if self.process and self.process.poll() is None:
+            print(f"[DEBUG] Sending SIGINT to Kiro process (PID: {self.process.pid})")
+            self.process.send_signal(signal.SIGINT)
     
     def set_chat_id(self, chat_id):
         """Set current chat ID for responses"""
