@@ -54,7 +54,7 @@ Files are saved with the pattern: `{timestamp}_{user_id}_{filename}`
 3. Sends the message to Kiro CLI for processing
 4. Kiro can read, analyze, or process the file as needed
 
-## Agent Management Commands
+## Bot Commands
 
 **Note:** Telegram bot commands use backslash (`\`) prefix, not forward slash (`/`).
 
@@ -62,6 +62,20 @@ Files are saved with the pattern: `{timestamp}_{user_id}_{filename}`
 ```
 \agent list           # List all available agents with their working directories
 \agent swap <name>    # Switch to a different agent
+\agent create <name>  # Create a new agent (interactive flow)
+\agent delete <name>  # Delete an existing agent
+```
+
+### Conversation Management
+```
+\chat save <name>     # Save current conversation state
+\chat load <name>     # Load and restore a saved conversation
+\chat list            # List all saved conversations
+```
+
+### Operation Control
+```
+\cancel               # Cancel the current running operation (sends Ctrl-C to Kiro)
 ```
 
 ### Configuring Agent Working Directories
@@ -84,19 +98,29 @@ Each agent can be configured to start in a specific project directory. Edit `~/.
 
 When you switch to an agent, Kiro will start in that agent's configured directory. This allows different agents to work on different projects without manual directory changes.
 
-### Conversation Management
-```
-\chat save <name>     # Save current conversation state
-\chat load <name>     # Load and restore a saved conversation
-\chat list            # List all saved conversations
-```
+## How Multi-Agent System Works
 
-## How Agent Management Works
+The bot maintains multiple Kiro CLI processes simultaneously, one for each agent:
 
-1. **Agent Configuration**: Maps agents to project directories in `~/.kiro/bot_agent_config.json`
-2. **Agent Switching**: Restarts kiro-cli in the agent's configured working directory
-3. **Directory Validation**: Falls back to default directory if configured path doesn't exist
-4. **Agent Listing**: Shows each agent's working directory for easy reference
+1. **Independent Sessions**: Each agent runs in its own Kiro CLI process with separate context
+2. **Agent Switching**: Use `\agent swap <name>` to switch between active agents
+3. **Lazy Loading**: Agent processes are only started when first accessed
+4. **Working Directories**: Each agent starts in its configured project directory
+5. **Context Isolation**: Conversations and context are isolated per agent
+6. **Concurrent Agents**: Multiple agents can be running simultaneously, but only one is active at a time
+
+### Agent Lifecycle
+- **Creation**: `\agent create <name>` - Interactive flow to define agent properties
+- **Activation**: First message to an agent or `\agent swap` starts its Kiro process
+- **Switching**: `\agent swap <name>` switches active agent without stopping others
+- **Deletion**: `\agent delete <name>` removes agent definition (stops process if running)
+
+### Use Cases
+- **Project Separation**: Different agents for different codebases (e.g., `facebook_dev`, `kiro_default`)
+- **Role Specialization**: Agents with different instructions for specific tasks
+- **Context Management**: Keep separate conversation contexts for different projects
+
+
 
 ## Agent File Structure
 
