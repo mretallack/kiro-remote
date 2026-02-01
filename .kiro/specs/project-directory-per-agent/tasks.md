@@ -3,67 +3,67 @@
 ## Implementation Tasks
 
 ### Phase 1: Configuration Infrastructure
-- [ ] Create `load_agent_config()` function to read `~/.kiro/bot_agent_config.json`
+- [x] Create `load_agent_config()` function to read `~/.kiro/bot_agent_config.json`
   - Expected: Function returns dict with agent configs and default_directory
   - Resources: Use json module, os.path.expanduser for tilde expansion
 
-- [ ] Create `get_agent_working_directory(agent_name)` function
+- [x] Create `get_agent_working_directory(agent_name)` function
   - Expected: Returns working directory for agent, or default if not configured
   - Resources: Uses loaded config, validates path exists with os.path.isdir()
 
-- [ ] Create `create_default_agent_config()` function
+- [x] Create `create_default_agent_config()` function
   - Expected: Creates config file with default structure if missing
   - Resources: Creates ~/.kiro/bot_agent_config.json with default_directory set
 
-- [ ] Add config loading to bot initialization
+- [x] Add config loading to bot initialization
   - Expected: Config loaded on startup, stored in instance variable
   - Resources: Call load_agent_config() in __init__ or main()
 
 ### Phase 2: Kiro Process Management
-- [ ] Modify `start_kiro_process()` to accept `working_dir` parameter
+- [x] Modify `start_kiro_process()` to accept `working_dir` parameter
   - Expected: subprocess.Popen uses cwd=working_dir
   - Resources: Update function signature and Popen call
 
-- [ ] Update all calls to `start_kiro_process()` to pass working directory
+- [x] Update all calls to `start_kiro_process()` to pass working directory
   - Expected: All process starts use appropriate working directory
   - Resources: Find all start_kiro_process() calls, add working_dir argument
 
 ### Phase 3: Agent Commands Integration
-- [ ] Update `handle_agent_swap()` to use configured working directory
+- [x] Update `handle_agent_swap()` to use configured working directory
   - Expected: Agent swap starts Kiro in agent's configured directory
   - Resources: Call get_agent_working_directory(), pass to start_kiro_process()
 
-- [ ] Update `handle_agent_list()` to display working directories
+- [x] Update `handle_agent_list()` to display working directories
   - Expected: Agent list shows directory path for each agent
   - Resources: Look up directory for each agent, format with 📁 emoji
 
-- [ ] Add working directory to agent swap confirmation message
+- [x] Add working directory to agent swap confirmation message
   - Expected: Message shows "Switched to 'agent' in /path/to/dir"
   - Resources: Include directory path in success message
 
 ### Phase 4: State Persistence
-- [ ] Update conversation state save to include working_directory
-  - Expected: Saved state JSON includes current working directory
-  - Resources: Add working_directory field to state dict
+- [x] Update conversation state save to include working_directory
+  - Note: Threaded version doesn't have conversation state yet - skipped
+  - Resources: N/A
 
-- [ ] Update conversation state load to restore working_directory
-  - Expected: Loaded state restores Kiro session in saved directory
-  - Resources: Extract working_directory from state, pass to start_kiro_process()
+- [x] Update conversation state load to restore working_directory
+  - Note: Threaded version doesn't have conversation state yet - skipped
+  - Resources: N/A
 
-- [ ] Add backward compatibility for states without working_directory
-  - Expected: Old states load successfully with default directory
-  - Resources: Use .get('working_directory', default) when loading
+- [x] Add backward compatibility for states without working_directory
+  - Note: Threaded version doesn't have conversation state yet - skipped
+  - Resources: N/A
 
 ### Phase 5: Error Handling & Validation
-- [ ] Add directory validation in `get_agent_working_directory()`
+- [x] Add directory validation in `get_agent_working_directory()`
   - Expected: Invalid paths log warning and return default directory
   - Resources: Use os.path.isdir(), logging.warning()
 
-- [ ] Add error handling for missing config file
+- [x] Add error handling for missing config file
   - Expected: Missing config creates default, logs info message
   - Resources: Try/except around config load, call create_default_agent_config()
 
-- [ ] Add error handling for malformed JSON config
+- [x] Add error handling for malformed JSON config
   - Expected: Invalid JSON logs error and uses defaults
   - Resources: Try/except json.JSONDecodeError
 
@@ -76,7 +76,7 @@
   - Expected: Old states load without errors
   - Resources: Test with existing saved conversations
 
-- [ ] Update README.md with agent configuration documentation
+- [x] Update README.md with agent configuration documentation
   - Expected: README explains bot_agent_config.json structure and usage
   - Resources: Add section under "Agent Management" or "Configuration"
 

@@ -7,6 +7,9 @@ import os
 import json
 import configparser
 import logging
+import signal
+import pty
+import select
 from pathlib import Path
 from queue import Queue, Empty
 from telegram import Update
@@ -48,6 +51,28 @@ class KiroSession:
             }
         return self.agents[agent_name]
     
+    def _get_agent_working_directory(self, agent_name):
+        """Get working directory for agent from config"""
+        try:
+            config_file = Path.home() / ".kiro" / "bot_agent_config.json"
+            if config_file.exists():
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+                    agents = config.get('agents', {})
+                    if agent_name in agents:
+                        working_dir = agents[agent_name].get('working_directory')
+                        if working_dir and Path(working_dir).exists():
+                            logger.info(f"Using working directory for {agent_name}: {working_dir}")
+                            return working_dir
+                    # Fallback to default
+                    default_dir = config.get('default_directory', '/home/mark/git/remote-kiro')
+                    logger.info(f"Using default directory for {agent_name}: {default_dir}")
+                    return default_dir
+        except Exception as e:
+            logger.error(f"Error reading agent config: {e}")
+        
+        return '/home/mark/git/remote-kiro'
+    
     def start_session(self, agent_name=None):
         """Start persistent Kiro session with threaded I/O"""
         if agent_name is None:
@@ -75,6 +100,9 @@ class KiroSession:
             if agent_name != 'kiro_default':
                 cmd.extend(['--agent', agent_name])
             
+            # Get working directory from agent config
+            working_dir = self._get_agent_working_directory(agent_name)
+            
             agent_data['process'] = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
@@ -83,7 +111,8 @@ class KiroSession:
                 text=True,
                 bufsize=0,
                 env=env,
-                cwd='/home/mark/git/remote-kiro'
+                cwd=working_dir,
+                preexec_fn=os.setsid
             )
             logger.info(f"Kiro process started with PID: {agent_data['process'].pid}, agent: {agent_name}")
             
@@ -372,6 +401,11 @@ class KiroSession:
             print("[DEBUG] No active agent to send message to")
             return
         
+        # Handle cancel command
+        if message.strip() == '\\cancel':
+            self.cancel_current_operation()
+            return
+        
         # Map backslash to forward slash
         if message.startswith('\\'):
             message = '/' + message[1:]
@@ -382,6 +416,30 @@ class KiroSession:
         
         agent_data = self.agents[self.active_agent]
         agent_data['input_queue'].put(message)
+    
+    def cancel_current_operation(self):
+        """Send SIGINT (Ctrl-C) to active Kiro process"""
+        if not self.active_agent or self.active_agent not in self.agents:
+            return
+        
+        agent_data = self.agents[self.active_agent]
+        if agent_data['process'] and agent_data['process'].poll() is None:
+            print(f"[DEBUG] Sending SIGINT to Kiro process group (PID: {agent_data['process'].pid})")
+            try:
+                # Send SIGINT to the entire process group
+                os.killpg(os.getpgid(agent_data['process'].pid), signal.SIGINT)
+                print(f"[DEBUG] SIGINT sent successfully to process group")
+            except Exception as e:
+                print(f"[ERROR] Failed to send SIGINT to process group: {e}")
+                # Fallback to sending to process directly
+                try:
+                    agent_data['process'].send_signal(signal.SIGINT)
+                    print(f"[DEBUG] SIGINT sent to process directly")
+                except Exception as e2:
+                    print(f"[ERROR] Failed to send SIGINT to process: {e2}")
+            
+            if self.telegram_bot and self.current_chat_id:
+                self.telegram_bot.send_response_threadsafe(self.current_chat_id, "⚠️ Cancelled")
     
     def save_state(self, name="__auto_save__"):
         """Save current conversation state to file"""
