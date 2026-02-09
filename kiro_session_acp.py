@@ -99,6 +99,43 @@ class KiroSessionACP:
             tool_name = tool.get('title', 'unknown')
             logger.info(f"Worker: Tool call: {tool_name}")
             self._send_to_telegram_sync(agent_data['chat_id'], f"🔧 {tool_name}...")
+        
+        def on_tool_update(update):
+            """Handle tool completion and send stdout/stderr."""
+            status = update.get('status')
+            if status != 'completed':
+                return
+            
+            raw_output = update.get('rawOutput', {})
+            items = raw_output.get('items', [])
+            
+            if not items:
+                return
+            
+            # Extract stdout/stderr from first item
+            output_data = items[0].get('Json', {})
+            stdout = output_data.get('stdout', '').strip()
+            stderr = output_data.get('stderr', '').strip()
+            exit_status = output_data.get('exit_status', '')
+            
+            if not stdout and not stderr:
+                return
+            
+            # Truncate if too long (first 1000 + last 1000 bytes)
+            def truncate_output(text, max_bytes=1000):
+                if len(text) <= max_bytes * 2:
+                    return text
+                return f"{text[:max_bytes]}\n\n... (truncated {len(text) - max_bytes * 2} bytes) ...\n\n{text[-max_bytes:]}"
+            
+            output_parts = []
+            if stdout:
+                output_parts.append(f"```\n{truncate_output(stdout)}\n```")
+            if stderr:
+                output_parts.append(f"**stderr:**\n```\n{truncate_output(stderr)}\n```")
+            
+            if output_parts:
+                message = "\n".join(output_parts)
+                self._send_to_telegram_sync(agent_data['chat_id'], message)
             
         def on_turn_end():
             logger.info(f"Worker: on_turn_end called")
@@ -118,10 +155,12 @@ class KiroSessionACP:
         # Clear old callbacks and register new ones
         session.chunk_callbacks = []
         session.tool_call_callbacks = []
+        session.tool_update_callbacks = []
         session.turn_end_callbacks = []
         
         session.on_chunk(on_chunk)
         session.on_tool_call(on_tool_call)
+        session.on_tool_update(on_tool_update)
         session.on_turn_end(on_turn_end)
         
         # Send message (blocks until response)

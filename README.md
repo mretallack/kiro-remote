@@ -27,16 +27,18 @@ A Python service that bridges Telegram with Kiro CLI, maintaining persistent con
 
 The bot shows what Kiro is doing in real-time:
 - **Tool Execution**: "🔧 Execute Bash..." when running commands
+- **Command Output**: Stdout/stderr from executed commands (truncated if >2000 bytes)
 - **File Operations**: "🔧 Fs Read..." when reading files
 - **Progress Indicators**: Typing indicators during long operations
 
 This helps you understand what Kiro is working on during longer tasks.
 
-**Note on Command Output**: Kiro does not stream command stdout in real-time over ACP. When you run a command, you'll see:
+**Command Output Behavior**: When you run a command, you'll see:
 1. Tool execution notification (e.g., "🔧 Running: echo hello")
-2. Kiro's summary/analysis of the result after the command completes
+2. Command stdout/stderr output (if any)
+3. Kiro's summary/analysis of the result
 
-Kiro summarizes command results rather than showing raw stdout. For long-running commands, you'll only see the tool notification until the command finishes.
+Long outputs are automatically truncated to show the first 1000 and last 1000 bytes.
 
 ## Attachment Support
 
