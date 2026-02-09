@@ -101,8 +101,13 @@ class KiroSessionACP:
             self._send_to_telegram_sync(agent_data['chat_id'], f"🔧 {tool_name}...")
             
         def on_turn_end():
+            logger.info(f"Worker: on_turn_end called")
+            logger.info(f"Worker: agent_data keys: {agent_data.keys()}")
+            logger.info(f"Worker: chunks type: {type(agent_data.get('chunks'))}")
+            logger.info(f"Worker: chunks length: {len(agent_data.get('chunks', []))}")
             chunks = agent_data['chunks']
             logger.info(f"Worker: Turn end - {len(chunks)} chunks accumulated")
+            logger.info(f"Worker: chunks bool: {bool(chunks)}")
             if chunks:
                 message = "".join(chunks)
                 logger.info(f"Worker: Sending final message (length: {len(message)})")

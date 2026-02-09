@@ -32,6 +32,12 @@ The bot shows what Kiro is doing in real-time:
 
 This helps you understand what Kiro is working on during longer tasks.
 
+**Note on Command Output**: Kiro does not stream command stdout in real-time over ACP. When you run a command, you'll see:
+1. Tool execution notification (e.g., "🔧 Running: echo hello")
+2. Kiro's summary/analysis of the result after the command completes
+
+Kiro summarizes command results rather than showing raw stdout. For long-running commands, you'll only see the tool notification until the command finishes.
+
 ## Attachment Support
 
 Send images and documents directly to Kiro for analysis, code review, or processing.

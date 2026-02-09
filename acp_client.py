@@ -66,7 +66,11 @@ class ACPClient:
                 
                 # Log full message for permission requests
                 message = json.loads(line)
-                if message.get("method") == "session/request_permission":
+                
+                # Debug: Log ALL session/update messages fully
+                if message.get("method") == "session/update":
+                    logger.info(f"ACPClient: SESSION UPDATE: {json.dumps(message, indent=2)}")
+                elif message.get("method") == "session/request_permission":
                     logger.info(f"ACPClient: FULL permission request: {json.dumps(message, indent=2)}")
                 else:
                     logger.info(f"ACPClient: Received from kiro-cli: {line.strip()[:200]}")
@@ -98,10 +102,13 @@ class ACPClient:
         
         logger.debug(f"Routing message: has_id={has_id}, has_method={has_method}, id={msg_id}, method={method}")
         
-        if has_id and msg_id in self.pending_requests:
-            # Response to a request we sent
-            logger.debug(f"Routing to pending request: {msg_id}")
-            self.pending_requests[msg_id].put(message)
+        if has_id and not has_method:
+            # Response to a request (has id but no method)
+            if msg_id in self.pending_requests:
+                logger.debug(f"Routing to pending request: {msg_id}")
+                self.pending_requests[msg_id].put(message)
+            else:
+                logger.debug(f"Received response for request {msg_id} that is no longer pending (likely already completed)")
         elif has_method:
             # Could be a notification or a request from server
             if has_id:
