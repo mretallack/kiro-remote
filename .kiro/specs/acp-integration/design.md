@@ -550,7 +550,9 @@ def supports_acp() -> bool:
 
 **Current:** Send file path as text in message
 
-**ACP:** Use structured content with image type
+**ACP:** Use structured content based on file type
+
+**For Images:**
 ```json
 {
   "type": "image",
@@ -561,7 +563,21 @@ def supports_acp() -> bool:
 }
 ```
 
-Kiro advertises `promptCapabilities.image: true` during initialization.
+**For Documents:**
+```json
+{
+  "type": "text",
+  "text": "Review this code\n\nThe attachment is /path/to/document.py"
+}
+```
+
+Kiro advertises `promptCapabilities.image: true` during initialization, confirming image support.
+
+**Implementation:**
+- Check file extension to determine if image or document
+- Images: Use ACP image content type
+- Documents: Include file path in text message (same as current)
+- Both approaches fully supported by ACP
 
 ### Logging and Debugging
 
@@ -578,6 +594,85 @@ KIRO_CHAT_LOG_FILE=/custom/path.log  # Custom log location
 - Monitor log file for debugging ACP communication
 - Parse stderr for additional logging output
 
+## Documentation Updates
+
+### README.md Changes
+
+**Add New Section: "Real-time Progress Updates"**
+```markdown
+## Real-time Progress Updates
+
+The bot shows what Kiro is doing in real-time:
+- Tool execution status (e.g., "Running execute_bash...")
+- File operations (e.g., "Reading main.py...")
+- Progress indicators for long-running operations
+
+This helps you understand what Kiro is working on during longer tasks.
+```
+
+**Update "How It Works" Section**
+```markdown
+## How It Works
+
+1. **Persistent Kiro Session**: Starts `kiro-cli acp` and maintains JSON-RPC communication
+2. **Structured Protocol**: Uses Agent Client Protocol (ACP) for reliable message exchange
+3. **Session Management**: Explicit session IDs for save/load functionality
+4. **Streaming Updates**: Receives real-time notifications for tool calls and progress
+5. **Smart Response Buffering**: Accumulates message chunks until TurnEnd signal
+6. **Message Processing**: Sends user messages via JSON-RPC, receives structured responses
+7. **Telegram Integration**: Uses python-telegram-bot library with thread-safe async messaging
+```
+
+**Update "Advantages" Section**
+```markdown
+## Advantages over Text-Based Communication
+
+- **True Persistence**: Single Kiro session maintains full context
+- **Better Performance**: No process startup overhead per message
+- **Structured Communication**: JSON-RPC eliminates text parsing and ANSI stripping
+- **Real-time Progress**: See tool execution status as it happens
+- **Reliable Cancellation**: Proper cancel mechanism via protocol
+- **Error Recovery**: Handles timeouts and connection issues gracefully
+- **Session Persistence**: Built-in session management with automatic persistence
+- **Simpler Deployment**: Single Python file, easy to manage as service
+```
+
+**Update "Bot Commands" Section**
+Add note about cancel:
+```markdown
+\cancel               # Cancel the current running operation (immediate response)
+```
+
+**Optional New Commands Section**
+```markdown
+### Advanced Commands (Optional)
+```
+\model <name>         # Switch to a different model mid-conversation
+\mode <name>          # Switch agent operating mode
+```
+```
+
+### Attachment Support Documentation
+
+**Confirm in README that attachments still work:**
+```markdown
+## Attachment Support
+
+Send images and documents directly to Kiro for analysis, code review, or processing.
+
+### Supported File Types
+- **Photos**: JPEG, PNG, WebP (up to 10 MB)
+- **Documents**: Any file type (up to 20 MB)
+
+### How It Works
+1. Bot downloads the attachment to the configured directory
+2. Sends structured image content via ACP protocol (for images)
+3. Sends file path in message (for documents)
+4. Kiro can read, analyze, or process the file as needed
+
+**Note**: Image attachments use ACP's native image content type for better integration.
+```
+
 ## Testing Strategy
 
 ### Unit Tests
@@ -586,6 +681,7 @@ KIRO_CHAT_LOG_FILE=/custom/path.log  # Custom log location
 - Notification routing
 - Error handling
 - Request ID generation and tracking
+- Image content formatting
 
 ### Integration Tests
 - Full initialization flow
@@ -596,6 +692,8 @@ KIRO_CHAT_LOG_FILE=/custom/path.log  # Custom log location
 - Mode and model switching
 - Slash command execution
 - MCP server event handling
+- Image attachment handling
+- Document attachment handling
 
 ### Compatibility Tests
 - Test with ACP-enabled kiro-cli
@@ -609,6 +707,12 @@ KIRO_CHAT_LOG_FILE=/custom/path.log  # Custom log location
 - Compaction status tracking
 - MCP OAuth flow
 - Session termination
+
+### User Experience Tests
+- Real-time progress updates display correctly
+- Cancel responds immediately
+- Attachments work with both images and documents
+- Session save/load preserves full state
 
 ## Migration Path
 
@@ -625,7 +729,20 @@ KIRO_CHAT_LOG_FILE=/custom/path.log  # Custom log location
 ### Phase 3: Deprecation
 - Remove text-based implementation
 - Require ACP-capable kiro-cli
-- Update documentation
+- Update documentation (README.md with all changes)
+
+## Documentation Requirements
+
+All user-facing changes must be documented in README.md:
+
+1. **Real-time Progress Updates** - New section explaining tool execution visibility
+2. **How It Works** - Update to reflect ACP protocol usage
+3. **Advantages** - Update to include ACP benefits
+4. **Bot Commands** - Note improved cancel response time
+5. **Attachment Support** - Clarify that images use native ACP image type
+6. **Optional Commands** - Document model/mode switching if implemented
+
+Changes should emphasize that existing functionality remains the same while adding new visibility features.
 
 ## Open Questions
 
