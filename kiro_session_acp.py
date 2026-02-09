@@ -9,6 +9,7 @@ import logging
 import queue
 import threading
 import asyncio
+import json
 from pathlib import Path
 from typing import Optional, Callable, Dict, Any
 from acp_client import ACPClient
@@ -192,13 +193,37 @@ class KiroSessionACP:
         
     # Public API (called from async layer)
     
+    def _load_agent_config(self):
+        """Load agent configuration from ~/.kiro/bot_agent_config.json"""
+        import os
+        config_path = os.path.expanduser('~/.kiro/bot_agent_config.json')
+        
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to load agent config: {e}")
+        
+        return {
+            "agents": {},
+            "default_directory": "/home/mark/git/remote-kiro"
+        }
+    
     def start_session(self, agent_name: str = 'kiro_default', working_dir: str = None):
         """Start a session (async-safe)."""
         if not self.running:
             self.start_worker()
             
         if working_dir is None:
-            working_dir = '/home/mark/git/remote-kiro'
+            # Load agent config to get working directory
+            config = self._load_agent_config()
+            working_dir = config.get("agents", {}).get(agent_name, {}).get("working_directory")
+            
+            if not working_dir:
+                working_dir = config.get("default_directory", "/home/mark/git/remote-kiro")
+            
+        logger.info(f"Starting session for agent '{agent_name}' in directory: {working_dir}")
             
         self.message_queue.put({
             'type': 'start_session',
