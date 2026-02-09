@@ -4,7 +4,7 @@ A Python service that bridges Telegram with Kiro CLI, maintaining persistent con
 
 ## ⚠️ Security Warning
 
-**This bot runs Kiro CLI with full system permissions (`--trust-all-tools`).** Kiro can execute commands, modify files, and access your system resources. Only use this bot:
+**This bot automatically approves tool execution requests from Kiro.** Kiro can execute commands, modify files, and access your system resources. Only use this bot:
 - On systems you control
 - With trusted Telegram users (configure `authorized_user` in settings)
 - When you understand the security implications
@@ -198,11 +198,13 @@ make service-stop
 
 1. **Persistent Kiro Session**: Starts `kiro-cli acp` and maintains JSON-RPC communication
 2. **Structured Protocol**: Uses Agent Client Protocol (ACP) for reliable message exchange
-3. **Session Management**: Explicit session IDs for save/load functionality
-4. **Streaming Updates**: Receives real-time notifications for tool calls and progress
-5. **Smart Response Buffering**: Accumulates message chunks until TurnEnd signal
-6. **Message Processing**: Sends user messages via JSON-RPC, receives structured responses
-7. **Telegram Integration**: Uses python-telegram-bot library with thread-safe async messaging
+3. **Permission Handling**: Automatically approves tool execution requests via ACP protocol
+4. **Session Management**: Explicit session IDs for save/load functionality
+5. **Streaming Updates**: Receives real-time notifications for tool calls and progress
+6. **Smart Response Buffering**: Accumulates message chunks until turn completion
+7. **Message Processing**: Sends user messages via JSON-RPC, receives structured responses
+8. **Queue-Based Architecture**: Async Telegram layer communicates with sync Kiro via message queue
+9. **Telegram Integration**: Uses python-telegram-bot library with thread-safe async messaging
 
 ## Advantages over Text-Based Communication
 

@@ -248,3 +248,31 @@ class KiroSessionACP:
     def list_agents(self):
         """List available agents."""
         return list(self.agents.keys())
+    
+    def save_state(self) -> bool:
+        """Save current session state (placeholder for compatibility)."""
+        # The queue-based implementation doesn't need explicit save_state
+        # Sessions are automatically persisted by kiro-cli
+        logger.info("save_state called (no-op in queue-based implementation)")
+        return True
+    
+    def restart_with_agent(self, agent_name: str) -> bool:
+        """Switch to a different agent."""
+        try:
+            logger.info(f"Switching to agent: {agent_name}")
+            
+            # Start session for the new agent if not already started
+            if agent_name not in self.agents:
+                self.start_session(agent_name=agent_name)
+                # Give it a moment to start
+                import time
+                time.sleep(1)
+            
+            # Switch active agent
+            self.active_agent = agent_name
+            logger.info(f"Switched to agent: {agent_name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to switch agent: {e}")
+            return False
