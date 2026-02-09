@@ -64,6 +64,9 @@ class ACPClient:
                 if not line:
                     break
                 
+                # DEBUG: Dump raw line to stdout
+                print(f"[RAW FROM KIRO-CLI] {line.strip()}", flush=True)
+                
                 # Log full message for permission requests
                 message = json.loads(line)
                 

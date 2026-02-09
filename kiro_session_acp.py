@@ -98,7 +98,20 @@ class KiroSessionACP:
         def on_tool_call(tool):
             tool_name = tool.get('title', 'unknown')
             logger.info(f"Worker: Tool call: {tool_name}")
-            self._send_to_telegram_sync(agent_data['chat_id'], f"🔧 {tool_name}...")
+            
+            # Extract command and purpose for better display
+            raw_input = tool.get('rawInput', {})
+            command = raw_input.get('command', '')
+            purpose = raw_input.get('__tool_use_purpose', '')
+            
+            # Format message with command details
+            message_parts = [f"🔧 {tool_name}"]
+            if purpose:
+                message_parts.append(f"\n_{purpose}_")
+            if command and command not in tool_name:
+                message_parts.append(f"\n`{command}`")
+            
+            self._send_to_telegram_sync(agent_data['chat_id'], "\n".join(message_parts))
         
         def on_tool_update(update):
             """Handle tool completion and send stdout/stderr."""
@@ -129,7 +142,7 @@ class KiroSessionACP:
             
             output_parts = []
             if stdout:
-                output_parts.append(f"```\n{truncate_output(stdout)}\n```")
+                output_parts.append(f"**Output:**\n```\n{truncate_output(stdout)}\n```")
             if stderr:
                 output_parts.append(f"**stderr:**\n```\n{truncate_output(stderr)}\n```")
             
