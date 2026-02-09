@@ -1011,10 +1011,30 @@ class TelegramBot:
                 with open(overview_file, 'w') as f:
                     f.write(f"# {state['agent_name']}\n\n{state['description']}\n")
                 
+                # Create working directory under /home/mark/git
+                working_dir = Path("/home/mark/git") / state['agent_name']
+                working_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Update bot_agent_config.json
+                config_file = Path.home() / ".kiro" / "bot_agent_config.json"
+                if config_file.exists():
+                    with open(config_file, 'r') as f:
+                        config = json.load(f)
+                else:
+                    config = {"agents": {}, "default_directory": "/home/mark/git/remote-kiro"}
+                
+                config["agents"][state['agent_name']] = {
+                    "working_directory": str(working_dir)
+                }
+                
+                with open(config_file, 'w') as f:
+                    json.dump(config, f, indent=2)
+                
                 await update.message.reply_text(
                     f"✅ Agent '{state['agent_name']}' created successfully!\n\n"
                     f"📝 Description: {state['description']}\n"
-                    f"🤖 Instructions: {state['instructions']}\n\n"
+                    f"🤖 Instructions: {state['instructions']}\n"
+                    f"📁 Working directory: {working_dir}\n\n"
                     f"Use `/agent swap {state['agent_name']}` to activate it."
                 )
                 
@@ -1046,7 +1066,8 @@ class TelegramBot:
             "allowedTools": [],
             "resources": [
                 "file://~/.kiro/steering/**/*.md",
-                f"file://~/.kiro/agents/{name}/steering/*.md"
+                f"file://~/.kiro/agents/{name}/steering/*.md",
+                f"file://~/git/{name}/.kiro/steering/**/*.md"
             ],
             "hooks": {},
             "toolsSettings": {},
