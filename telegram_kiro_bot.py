@@ -15,13 +15,8 @@ from queue import Empty, Queue
 
 from telegram import Update
 from telegram.constants import ChatAction
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
+from telegram.ext import (Application, CommandHandler, ContextTypes,
+                          MessageHandler, filters)
 
 # Import ACP session manager
 from kiro_session_acp import KiroSessionACP
