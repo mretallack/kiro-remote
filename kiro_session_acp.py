@@ -294,11 +294,11 @@ class KiroSessionACP:
             agent_data = self.agents[self.active_agent]
             session = agent_data["session"]
             session.set_mode(mode_id)
-            
+
             # Update stored mode info
             if "modes" in agent_data:
                 agent_data["modes"]["currentModeId"] = mode_id
-            
+
             logger.info(f"Worker: Set mode to {mode_id} for agent {self.active_agent}")
         except Exception as e:
             logger.error(f"Worker: Error setting mode: {e}")
@@ -496,11 +496,11 @@ class KiroSessionACP:
 
             # Switch active agent
             self.active_agent = agent_name
-            
+
             # Try to set the mode to match the agent name
             # This will silently fail if the mode doesn't exist
             self.set_mode(agent_name)
-            
+
             logger.info(f"Switched to agent: {agent_name}")
             return True
 

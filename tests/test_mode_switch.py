@@ -1,6 +1,7 @@
 """Test mode switching when swapping agents."""
 
 import time
+
 from kiro_session_acp import KiroSessionACP
 
 

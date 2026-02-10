@@ -1,7 +1,8 @@
 """Test that mode switching actually changes the kiro-cli mode."""
 
-import time
 import queue
+import time
+
 from kiro_session_acp import KiroSessionACP
 
 
