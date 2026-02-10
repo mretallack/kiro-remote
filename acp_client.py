@@ -274,7 +274,7 @@ class ACPClient:
         """Change the model for the session."""
         params = {
             "sessionId": session_id,
-            "model": model
+            "modelId": model
         }
         self._send_request("session/set_model", params)
         logger.info(f"Set model to: {model}")

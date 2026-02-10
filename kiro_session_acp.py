@@ -42,6 +42,14 @@ class KiroSessionACP:
             return None
         return self.agents[self.active_agent].get('models', {})
     
+    def set_model(self, model_id: str, chat_id: int):
+        """Set the model for the active agent (async-safe)."""
+        self.message_queue.put({
+            'type': 'set_model',
+            'model_id': model_id,
+            'chat_id': chat_id
+        })
+    
     def start_worker(self):
         """Start the worker thread."""
         if self.worker_thread and self.worker_thread.is_alive():
@@ -68,6 +76,8 @@ class KiroSessionACP:
                     self._handle_send_message(msg)
                 elif msg_type == 'start_session':
                     self._handle_start_session(msg)
+                elif msg_type == 'set_model':
+                    self._handle_set_model(msg)
                 elif msg_type == 'cancel':
                     self._handle_cancel(msg)
                 elif msg_type == 'close':
@@ -113,7 +123,7 @@ class KiroSessionACP:
             # Format message with command details
             message_parts = [f"🔧 {tool_name}"]
             if purpose:
-                message_parts.append(f"\n_{purpose}_")
+                message_parts.append(f"\n{purpose}")
             if command and command not in tool_name:
                 message_parts.append(f"\n`{command}`")
             
@@ -230,6 +240,31 @@ class KiroSessionACP:
             logger.error(f"Worker: Error starting session: {e}")
             import traceback
             traceback.print_exc()
+    
+    def _handle_set_model(self, msg: Dict[str, Any]):
+        """Handle set_model request in worker thread."""
+        model_id = msg['model_id']
+        chat_id = msg['chat_id']
+        
+        if not self.active_agent or self.active_agent not in self.agents:
+            self._send_error(chat_id, "No active agent")
+            return
+        
+        try:
+            agent_data = self.agents[self.active_agent]
+            session = agent_data['session']
+            session.client.set_model(session.session_id, model_id)
+            
+            # Update stored model info
+            agent_data['models']['currentModelId'] = model_id
+            
+            self._send_to_telegram_sync(chat_id, f"✓ Model set to: {model_id}")
+            logger.info(f"Worker: Set model to {model_id}")
+        except Exception as e:
+            logger.error(f"Worker: Error setting model: {e}")
+            import traceback
+            traceback.print_exc()
+            self._send_error(chat_id, f"Failed to set model: {str(e)}")
             
     def _handle_cancel(self, msg: Dict[str, Any]):
         """Handle cancel request in worker thread."""

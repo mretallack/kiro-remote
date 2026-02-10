@@ -242,12 +242,18 @@ class TelegramBot:
         # Model commands
         if normalized_text.startswith('/model'):
             print(f"[DEBUG] Intercepted model command")
-            parts = normalized_text.split()
-            if len(parts) == 2 and parts[1] == 'list':
-                await self.show_models(update, context)
-                return True
+            parts = normalized_text.split(maxsplit=1)
+            if len(parts) == 2:
+                if parts[1] == 'list':
+                    await self.show_models(update, context)
+                    return True
+                else:
+                    # Set model
+                    model_id = parts[1]
+                    await self.set_model(update, context, model_id)
+                    return True
             else:
-                await update.message.reply_text("Usage: \\model list")
+                await update.message.reply_text("Usage: \\model list OR \\model <model_id>")
                 return True
         
         # Agent commands
@@ -437,6 +443,38 @@ class TelegramBot:
             await update.message.reply_text(response, parse_mode='Markdown')
         except Exception as e:
             logger.error(f"Error showing models: {e}")
+            await update.message.reply_text(f"❌ Error: {e}")
+    
+    async def set_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE, model_id: str):
+        """Handle intercepted /model <model_id> command"""
+        if update.effective_user.username != self.authorized_user:
+            return
+        
+        try:
+            # Validate model exists
+            models_info = self.kiro.get_available_models()
+            if not models_info:
+                await update.message.reply_text("❌ No model information available")
+                return
+            
+            available_models = models_info.get('availableModels', [])
+            valid_model_ids = [m['modelId'] for m in available_models]
+            
+            if model_id not in valid_model_ids:
+                await update.message.reply_text(
+                    f"❌ Invalid model: `{model_id}`\n\n"
+                    f"Available models: {', '.join(f'`{m}`' for m in valid_model_ids)}",
+                    parse_mode='Markdown'
+                )
+                return
+            
+            # Set the model
+            chat_id = update.effective_chat.id
+            self.kiro.set_model(model_id, chat_id)
+            
+        except Exception as e:
+            logger.error(f"Error setting model: {e}")
+            await update.message.reply_text(f"❌ Error: {e}")
             await update.message.reply_text(f"❌ Error getting models: {e}")
     
     async def swap_agent(self, update: Update, context: ContextTypes.DEFAULT_TYPE, agent_name: str):

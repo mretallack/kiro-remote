@@ -100,6 +100,14 @@ Files are saved with the pattern: `{timestamp}_{user_id}_{filename}`
 ### Model Management
 ```
 \model list           # List all available models and show current model
+\model <model_id>     # Set the model for the current session
+```
+
+Examples:
+```
+\model list                    # Show available models
+\model claude-sonnet-4.5       # Switch to Claude Sonnet 4.5
+\model claude-opus-4.6         # Switch to Claude Opus 4.6
 ```
 
 ### Limitations
