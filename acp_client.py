@@ -279,7 +279,7 @@ class ACPClient:
 
     def set_mode(self, session_id: str, mode: str) -> None:
         """Switch agent mode."""
-        params = {"sessionId": session_id, "mode": mode}
+        params = {"sessionId": session_id, "modeId": mode}
         self._send_request("session/set_mode", params)
         logger.info(f"Set mode to: {mode}")
 
