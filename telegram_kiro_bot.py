@@ -226,6 +226,30 @@ class TelegramBot:
         normalized_text = message_text.replace('\\', '/')
         print(f"[DEBUG] Normalized text: {normalized_text}")
         
+        # Usage command
+        if normalized_text == '/usage':
+            print(f"[DEBUG] Intercepted usage command")
+            await self.show_usage(update, context)
+            return True
+        
+        # Cancel command
+        if normalized_text == '/cancel':
+            print(f"[DEBUG] Intercepted cancel command")
+            self.kiro.cancel_operation()
+            await update.message.reply_text("🛑 Cancelling operation...")
+            return True
+        
+        # Model commands
+        if normalized_text.startswith('/model'):
+            print(f"[DEBUG] Intercepted model command")
+            parts = normalized_text.split()
+            if len(parts) == 2 and parts[1] == 'list':
+                await self.show_models(update, context)
+                return True
+            else:
+                await update.message.reply_text("Usage: \\model list")
+                return True
+        
         # Agent commands
         if normalized_text.startswith('/agent'):
             print(f"[DEBUG] Intercepted agent command")
@@ -370,6 +394,50 @@ class TelegramBot:
             import traceback
             print(f"[DEBUG] Traceback: {traceback.format_exc()}")
             await update.message.reply_text(f"Error: {e}")
+    
+    async def show_usage(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle intercepted /usage command - show credits and billing info"""
+        if update.effective_user.username != self.authorized_user:
+            return
+        
+        try:
+            # Send usage request to Kiro CLI
+            chat_id = update.effective_chat.id
+            self.kiro.send_message("/usage", chat_id)
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error getting usage info: {e}")
+    
+    async def show_models(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle intercepted /model list command"""
+        if update.effective_user.username != self.authorized_user:
+            return
+        
+        try:
+            models_info = self.kiro.get_available_models()
+            if not models_info:
+                await update.message.reply_text("❌ No model information available")
+                return
+            
+            current_model = models_info.get('currentModelId', 'unknown')
+            available_models = models_info.get('availableModels', [])
+            
+            if not available_models:
+                await update.message.reply_text("❌ No models available")
+                return
+            
+            # Format the response
+            response = f"**Current Model:** `{current_model}`\n\n**Available Models:**\n"
+            for model in available_models:
+                model_id = model.get('modelId', 'unknown')
+                name = model.get('name', 'unknown')
+                description = model.get('description', '')
+                marker = "→ " if model_id == current_model else "  "
+                response += f"{marker}`{model_id}` - {description}\n"
+            
+            await update.message.reply_text(response, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Error showing models: {e}")
+            await update.message.reply_text(f"❌ Error getting models: {e}")
     
     async def swap_agent(self, update: Update, context: ContextTypes.DEFAULT_TYPE, agent_name: str):
         """Handle intercepted /agent swap command"""

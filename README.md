@@ -97,6 +97,11 @@ Files are saved with the pattern: `{timestamp}_{user_id}_{filename}`
 \cancel               # Cancel the current running operation (immediate response)
 ```
 
+### Model Management
+```
+\model list           # List all available models and show current model
+```
+
 ### Limitations
 
 **Usage/Billing Command**: The `/usage` command available in the regular Kiro CLI is not supported in ACP mode. To check your account usage and credits, use the regular CLI:

@@ -36,6 +36,12 @@ class KiroSessionACP:
         self.worker_thread = None
         self.running = False
         
+    def get_available_models(self):
+        """Get list of available models for active agent."""
+        if not self.active_agent or self.active_agent not in self.agents:
+            return None
+        return self.agents[self.active_agent].get('models', {})
+    
     def start_worker(self):
         """Start the worker thread."""
         if self.worker_thread and self.worker_thread.is_alive():
@@ -197,7 +203,13 @@ class KiroSessionACP:
             client = ACPClient(working_dir)
             client.start()
             client.initialize()
-            session_id = client.create_session(working_dir)
+            
+            # Get full session response to capture models info
+            session_result = client._send_request("session/new", {
+                "cwd": working_dir,
+                "mcpServers": []
+            })
+            session_id = session_result["sessionId"]
             session = ACPSession(session_id, client)
             
             # Store for this agent
@@ -207,7 +219,8 @@ class KiroSessionACP:
                 'session_id': session_id,
                 'working_dir': working_dir,
                 'chunks': [],  # Store chunks per agent
-                'chat_id': None  # Store chat_id per agent
+                'chat_id': None,  # Store chat_id per agent
+                'models': session_result.get('models', {})  # Store models info
             }
             
             self.active_agent = agent_name
