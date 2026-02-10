@@ -146,8 +146,18 @@ The bot maintains multiple Kiro CLI processes simultaneously, one for each agent
 2. **Agent Switching**: Use `\agent swap <name>` to switch between active agents
 3. **Lazy Loading**: Agent processes are only started when first accessed
 4. **Working Directories**: Each agent starts in its configured project directory
-5. **Context Isolation**: Conversations and context are isolated per agent
-6. **Concurrent Agents**: Multiple agents can be running simultaneously, but only one is active at a time
+5. **Automatic Mode Switching**: When switching agents, the bot automatically sets the kiro-cli mode to match the agent name (if a matching mode exists)
+6. **Context Isolation**: Conversations and context are isolated per agent
+7. **Concurrent Agents**: Multiple agents can be running simultaneously, but only one is active at a time
+
+### Automatic Mode Switching
+
+When you swap to an agent (e.g., `\agent swap facebook`), the bot automatically:
+1. Switches to the agent's kiro-cli process
+2. Changes to the agent's working directory
+3. Sets the kiro-cli mode to match the agent name (if available)
+
+This gives each agent the right context automatically. If no matching mode exists, the agent continues with the default mode.
 
 ### Agent Lifecycle
 - **Creation**: `\agent create <name>` - Interactive flow to define agent properties

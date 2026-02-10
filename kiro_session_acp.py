@@ -44,11 +44,21 @@ class KiroSessionACP:
             return None
         return self.agents[self.active_agent].get("models", {})
 
+    def get_available_modes(self):
+        """Get list of available modes for active agent."""
+        if not self.active_agent or self.active_agent not in self.agents:
+            return None
+        return self.agents[self.active_agent].get("modes", {})
+
     def set_model(self, model_id: str, chat_id: int):
         """Set the model for the active agent (async-safe)."""
         self.message_queue.put(
             {"type": "set_model", "model_id": model_id, "chat_id": chat_id}
         )
+
+    def set_mode(self, mode_id: str):
+        """Set the mode for the active agent (async-safe)."""
+        self.message_queue.put({"type": "set_mode", "mode_id": mode_id})
 
     def start_worker(self):
         """Start the worker thread."""
@@ -78,6 +88,8 @@ class KiroSessionACP:
                     self._handle_start_session(msg)
                 elif msg_type == "set_model":
                     self._handle_set_model(msg)
+                elif msg_type == "set_mode":
+                    self._handle_set_mode(msg)
                 elif msg_type == "cancel":
                     self._handle_cancel(msg)
                 elif msg_type == "close":
@@ -232,6 +244,7 @@ class KiroSessionACP:
                 "chunks": [],  # Store chunks per agent
                 "chat_id": None,  # Store chat_id per agent
                 "models": session_result.get("models", {}),  # Store models info
+                "modes": session_result.get("modes", {}),  # Store modes info
             }
 
             self.active_agent = agent_name
@@ -268,6 +281,30 @@ class KiroSessionACP:
 
             traceback.print_exc()
             self._send_error(chat_id, f"Failed to set model: {str(e)}")
+
+    def _handle_set_mode(self, msg: Dict[str, Any]):
+        """Handle set_mode request in worker thread."""
+        mode_id = msg["mode_id"]
+
+        if not self.active_agent or self.active_agent not in self.agents:
+            logger.warning(f"Cannot set mode: no active agent")
+            return
+
+        try:
+            agent_data = self.agents[self.active_agent]
+            session = agent_data["session"]
+            session.set_mode(mode_id)
+            
+            # Update stored mode info
+            if "modes" in agent_data:
+                agent_data["modes"]["currentModeId"] = mode_id
+            
+            logger.info(f"Worker: Set mode to {mode_id} for agent {self.active_agent}")
+        except Exception as e:
+            logger.error(f"Worker: Error setting mode: {e}")
+            import traceback
+
+            traceback.print_exc()
 
     def _handle_cancel(self, msg: Dict[str, Any]):
         """Handle cancel request in worker thread."""
@@ -414,7 +451,7 @@ class KiroSessionACP:
         if self.worker_thread:
             self.worker_thread.join(timeout=5)
 
-        for agent_name, agent_data in self.agents.items():
+        for agent_name, agent_data in list(self.agents.items()):
             try:
                 agent_data["client"].close()
             except:
@@ -459,6 +496,11 @@ class KiroSessionACP:
 
             # Switch active agent
             self.active_agent = agent_name
+            
+            # Try to set the mode to match the agent name
+            # This will silently fail if the mode doesn't exist
+            self.set_mode(agent_name)
+            
             logger.info(f"Switched to agent: {agent_name}")
             return True
 

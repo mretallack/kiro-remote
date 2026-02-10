@@ -449,6 +449,8 @@ class TelegramBot:
 
         try:
             models_info = self.kiro.get_available_models()
+            modes_info = self.kiro.get_available_modes()
+            
             if not models_info:
                 await update.message.reply_text("❌ No model information available")
                 return
@@ -461,7 +463,14 @@ class TelegramBot:
                 return
 
             # Format the response
-            response = f"<b>Current Model:</b> <code>{current_model}</code>\n\n<b>Available Models:</b>\n"
+            response = f"<b>Current Model:</b> <code>{current_model}</code>\n"
+            
+            # Add current mode if available
+            if modes_info:
+                current_mode = modes_info.get("currentModeId", "unknown")
+                response += f"<b>Current Mode:</b> <code>{current_mode}</code>\n"
+            
+            response += f"\n<b>Available Models:</b>\n"
             for model in available_models:
                 model_id = model.get("modelId", "unknown")
                 name = model.get("name", "unknown")
