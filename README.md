@@ -97,6 +97,14 @@ Files are saved with the pattern: `{timestamp}_{user_id}_{filename}`
 \cancel               # Cancel the current running operation (immediate response)
 ```
 
+### Limitations
+
+**Usage/Billing Command**: The `/usage` command available in the regular Kiro CLI is not supported in ACP mode. To check your account usage and credits, use the regular CLI:
+```bash
+kiro-cli chat
+/usage
+```
+
 ### Configuring Agent Working Directories
 
 Each agent can be configured to start in a specific project directory. Edit `~/.kiro/bot_agent_config.json`:
