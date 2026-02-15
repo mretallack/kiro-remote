@@ -4,7 +4,7 @@ A Python service that bridges Telegram with Kiro CLI, maintaining persistent con
 
 ## ⚠️ Security Warning
 
-**This bot runs Kiro CLI with full system permissions (`--trust-all-tools`).** Kiro can execute commands, modify files, and access your system resources. Only use this bot:
+**This bot automatically approves tool execution requests from Kiro.** Kiro can execute commands, modify files, and access your system resources. Only use this bot:
 - On systems you control
 - With trusted Telegram users (configure `authorized_user` in settings)
 - When you understand the security implications
@@ -13,15 +13,32 @@ A Python service that bridges Telegram with Kiro CLI, maintaining persistent con
 
 ## Features
 
-- **Persistent Session**: Maintains a single Kiro CLI session across all messages
-- **Agent Management**: Create, switch, and manage Kiro agents without CLI restarts
-- **Conversation Persistence**: Save and restore conversation sessions
-- **Attachment Support**: Send images and documents to Kiro for analysis
-- **Auto Tool Trust**: Automatically trusts all tools to avoid prompts
-- **Clean Output**: Strips ANSI escape codes for Telegram compatibility  
+- **Persistent Session**: Maintains Kiro CLI sessions with structured communication
+- **Agent Management**: Create, switch, and manage Kiro agents with isolated contexts
+- **Conversation Persistence**: Save and restore conversation sessions with session IDs
+- **Attachment Support**: Send images (native ACP support) and documents to Kiro
+- **Real-time Progress**: See tool execution status as Kiro works
+- **Clean Communication**: Structured JSON-RPC protocol (no ANSI parsing needed)
 - **User Filtering**: Only responds to authorized user (configurable)
 - **Error Handling**: Robust error handling and automatic recovery
-- **Progress Updates**: Shows typing indicators during processing
+- **Fast Cancellation**: Immediate response to cancel commands
+
+## Real-time Progress Updates
+
+The bot shows what Kiro is doing in real-time:
+- **Tool Execution**: "🔧 Execute Bash..." when running commands
+- **Command Output**: Stdout/stderr from executed commands (truncated if >2000 bytes)
+- **File Operations**: "🔧 Fs Read..." when reading files
+- **Progress Indicators**: Typing indicators during long operations
+
+This helps you understand what Kiro is working on during longer tasks.
+
+**Command Output Behavior**: When you run a command, you'll see:
+1. Tool execution notification (e.g., "🔧 Running: echo hello")
+2. Command stdout/stderr output (if any)
+3. Kiro's summary/analysis of the result
+
+Long outputs are automatically truncated to show the first 1000 and last 1000 bytes.
 
 ## Attachment Support
 
@@ -50,9 +67,11 @@ Files are saved with the pattern: `{timestamp}_{user_id}_{filename}`
 
 ### How It Works
 1. Bot downloads the attachment to the configured directory
-2. Formats a message: `{your_caption}\n\nThe attachment is {file_path}`
-3. Sends the message to Kiro CLI for processing
+2. For images: Sends via ACP's native image content type
+3. For documents: Includes file path in message text
 4. Kiro can read, analyze, or process the file as needed
+
+**Note**: Image attachments use ACP's native image content type for better integration.
 
 ## Bot Commands
 
@@ -75,7 +94,28 @@ Files are saved with the pattern: `{timestamp}_{user_id}_{filename}`
 
 ### Operation Control
 ```
-\cancel               # Cancel the current running operation (sends Ctrl-C to Kiro)
+\cancel               # Cancel the current running operation (immediate response)
+```
+
+### Model Management
+```
+\model list           # List all available models and show current model
+\model <model_id>     # Set the model for the current session
+```
+
+Examples:
+```
+\model list                    # Show available models
+\model claude-sonnet-4.5       # Switch to Claude Sonnet 4.5
+\model claude-opus-4.6         # Switch to Claude Opus 4.6
+```
+
+### Limitations
+
+**Usage/Billing Command**: The `/usage` command available in the regular Kiro CLI is not supported in ACP mode. To check your account usage and credits, use the regular CLI:
+```bash
+kiro-cli chat
+/usage
 ```
 
 ### Configuring Agent Working Directories
@@ -106,8 +146,18 @@ The bot maintains multiple Kiro CLI processes simultaneously, one for each agent
 2. **Agent Switching**: Use `\agent swap <name>` to switch between active agents
 3. **Lazy Loading**: Agent processes are only started when first accessed
 4. **Working Directories**: Each agent starts in its configured project directory
-5. **Context Isolation**: Conversations and context are isolated per agent
-6. **Concurrent Agents**: Multiple agents can be running simultaneously, but only one is active at a time
+5. **Automatic Mode Switching**: When switching agents, the bot automatically sets the kiro-cli mode to match the agent name (if a matching mode exists)
+6. **Context Isolation**: Conversations and context are isolated per agent
+7. **Concurrent Agents**: Multiple agents can be running simultaneously, but only one is active at a time
+
+### Automatic Mode Switching
+
+When you swap to an agent (e.g., `\agent swap facebook`), the bot automatically:
+1. Switches to the agent's kiro-cli process
+2. Changes to the agent's working directory
+3. Sets the kiro-cli mode to match the agent name (if available)
+
+This gives each agent the right context automatically. If no matching mode exists, the agent continues with the default mode.
 
 ### Agent Lifecycle
 - **Creation**: `\agent create <name>` - Interactive flow to define agent properties
@@ -142,13 +192,13 @@ Conversation states are stored in `~/.kiro/bot_conversations/`:
 ```json
 {
   "current_agent": "agent_name",
+  "session_id": "sess_abc123",
   "timestamp": 1704067200.0,
-  "conversation_history": [
-    {"user": "message", "bot": "response", "timestamp": 1704067200.0}
-  ],
   "working_directory": "/home/mark/git/remote-kiro"
 }
 ```
+
+Sessions are automatically persisted by kiro-cli to `~/.kiro/sessions/cli/`.
 
 ## Setup
 
@@ -185,21 +235,25 @@ make service-stop
 
 ## How It Works
 
-1. **Persistent Kiro Session**: Starts `kiro-cli chat --trust-all-tools` once and keeps it running
-2. **Threaded I/O**: Uses separate threads for input, output, and response processing
-3. **Auto Tool Trust**: Automatically trusts all tools using `/tools trust-all` command and handles prompts
-4. **Smart Response Buffering**: Accumulates output until prompt detected or timeout (3 seconds)
-5. **Message Processing**: Sends user messages to Kiro, captures and buffers responses
-6. **Output Cleaning**: Removes ANSI codes, filters prompts, and handles multi-line messages
-7. **Timeout Handling**: Automatically sends buffered responses after inactivity
-8. **Telegram Integration**: Uses python-telegram-bot library with thread-safe async messaging
+1. **Persistent Kiro Session**: Starts `kiro-cli acp` and maintains JSON-RPC communication
+2. **Structured Protocol**: Uses Agent Client Protocol (ACP) for reliable message exchange
+3. **Permission Handling**: Automatically approves tool execution requests via ACP protocol
+4. **Session Management**: Explicit session IDs for save/load functionality
+5. **Streaming Updates**: Receives real-time notifications for tool calls and progress
+6. **Smart Response Buffering**: Accumulates message chunks until turn completion
+7. **Message Processing**: Sends user messages via JSON-RPC, receives structured responses
+8. **Queue-Based Architecture**: Async Telegram layer communicates with sync Kiro via message queue
+9. **Telegram Integration**: Uses python-telegram-bot library with thread-safe async messaging
 
-## Advantages over shell2telegram
+## Advantages over Text-Based Communication
 
 - **True Persistence**: Single Kiro session maintains full context
 - **Better Performance**: No process startup overhead per message
-- **Cleaner Output**: Proper ANSI stripping and response filtering
-- **Error Recovery**: Handles timeouts and connection issues
+- **Structured Communication**: JSON-RPC eliminates text parsing and ANSI stripping
+- **Real-time Progress**: See tool execution status as it happens
+- **Reliable Cancellation**: Proper cancel mechanism via protocol
+- **Error Recovery**: Handles timeouts and connection issues gracefully
+- **Session Persistence**: Built-in session management with automatic persistence
 - **Simpler Deployment**: Single Python file, easy to manage as service
 
 ## Logs

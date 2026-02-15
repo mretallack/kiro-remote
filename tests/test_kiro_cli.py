@@ -1,21 +1,19 @@
-import subprocess
-import pytest
-import time
 import os
+import subprocess
+import time
+
+import pytest
 
 
 class TestKiroCLI:
     """Test suite for Kiro CLI interface validation."""
-    
+
     def run_kiro_command(self, args, timeout=10):
         """Run kiro-cli command and return result."""
         cmd = ["kiro-cli"] + args
         try:
             result = subprocess.run(
-                cmd, 
-                capture_output=True, 
-                text=True, 
-                timeout=timeout
+                cmd, capture_output=True, text=True, timeout=timeout
             )
             return result
         except subprocess.TimeoutExpired:
@@ -68,7 +66,7 @@ class TestKiroCLI:
 
 class TestKiroInterface:
     """Test Kiro CLI interface through subprocess interaction."""
-    
+
     def test_kiro_basic_interaction(self):
         """Test basic interaction with kiro-cli chat."""
         try:
@@ -78,16 +76,16 @@ class TestKiroInterface:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
             )
-            
+
             # Send a simple test message
             test_input = "hello\n/quit\n"
             stdout, stderr = proc.communicate(input=test_input, timeout=30)
-            
+
             # Should exit cleanly
             assert proc.returncode in [0, 1]  # Some exit codes are acceptable
-            
+
         except subprocess.TimeoutExpired:
             proc.kill()
             pytest.fail("Kiro CLI chat session timed out")
@@ -102,15 +100,15 @@ class TestKiroInterface:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
             )
-            
+
             # Test tools trust command
             test_input = "/tools trust-all\n/quit\n"
             stdout, stderr = proc.communicate(input=test_input, timeout=20)
-            
+
             assert proc.returncode in [0, 1]
-            
+
         except subprocess.TimeoutExpired:
             proc.kill()
             pytest.fail("Tools trust test timed out")
