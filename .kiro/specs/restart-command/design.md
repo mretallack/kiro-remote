@@ -4,6 +4,8 @@
 
 The `\restart` command will restart the Kiro CLI engine process for the currently active agent while preserving agent selection and configuration.
 
+**Restart Mechanism**: This design uses **process termination and respawn**, not an ACP protocol command. The ACP specification does not include a restart method - only session management methods like `session/new`, `session/load`, and `session/cancel`. Therefore, we terminate the existing `kiro-cli acp` subprocess and spawn a new one with the same configuration.
+
 ## Component Interactions
 
 ```
