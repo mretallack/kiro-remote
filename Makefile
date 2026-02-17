@@ -2,7 +2,7 @@
 
 # Python virtual environment
 VENV = venv
-PYTHON_VERSION = python3.12
+PYTHON_VERSION = python3.13
 PYTHON = $(VENV)/bin/python
 PIP = $(VENV)/bin/pip
 
