@@ -852,7 +852,9 @@ class TelegramBot:
             await self.application.bot.send_chat_action(
                 chat_id=chat_id, action=ChatAction.TYPING
             )
-            await self.application.bot.send_message(chat_id=chat_id, text=text)
+            await self.application.bot.send_message(
+                chat_id=chat_id, text=text, parse_mode="HTML"
+            )
             print("[DEBUG] Response sent successfully")
         except Exception as e:
             print(f"[DEBUG] Error sending response: {e}")
