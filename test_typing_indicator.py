@@ -22,65 +22,64 @@ def monitor_logs(duration=30):
     print("Example: 'Count from 1 to 20 slowly with 1 second between each'")
     print("=" * 60)
     print()
-    
+
     # Start log monitoring
     cmd = [
-        "sudo", "journalctl", 
-        "-u", "telegram-kiro-bot.service",
+        "sudo",
+        "journalctl",
+        "-u",
+        "telegram-kiro-bot.service",
         "-f",
-        "--since", "now"
+        "--since",
+        "now",
     ]
-    
+
     process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
     )
-    
+
     typing_started = False
     typing_stopped = False
     typing_count = 0
     start_time = time.time()
-    
+
     try:
         while time.time() - start_time < duration:
             line = process.stdout.readline()
             if not line:
                 break
-            
+
             timestamp = datetime.now().strftime("%H:%M:%S")
-            
+
             # Check for typing indicator events
             if "Typing indicator thread started" in line:
                 typing_started = True
                 print(f"[{timestamp}] ✅ TYPING STARTED")
-                
+
             elif "send_chat_action" in line and "TYPING" in line:
                 typing_count += 1
                 print(f"[{timestamp}] 🔄 Typing indicator refresh #{typing_count}")
-                
+
             elif "Typing indicator thread stopped" in line:
                 typing_stopped = True
                 print(f"[{timestamp}] ⏹️  TYPING STOPPED")
-                
+
             elif "Worker: Sending message:" in line:
                 print(f"[{timestamp}] 📨 Message received by bot")
-                
+
             elif "Worker: Turn end complete" in line:
                 print(f"[{timestamp}] ✅ Response complete")
-                
+
             elif "Typing indicator error:" in line:
                 print(f"[{timestamp}] ❌ ERROR: {line.strip()}")
-    
+
     except KeyboardInterrupt:
         print("\n\nMonitoring stopped by user")
-    
+
     finally:
         process.terminate()
         process.wait()
-    
+
     # Summary
     print("\n" + "=" * 60)
     print("SUMMARY")
@@ -89,7 +88,7 @@ def monitor_logs(duration=30):
     print(f"Typing refreshes: {typing_count}")
     print(f"Typing stopped: {'✅ YES' if typing_stopped else '❌ NO'}")
     print()
-    
+
     if typing_started and typing_count > 0 and typing_stopped:
         print("✅ TEST PASSED: Typing indicator working correctly!")
         return 0
@@ -108,22 +107,22 @@ if __name__ == "__main__":
     print("Telegram Bot Typing Indicator Test")
     print("=" * 60)
     print()
-    
+
     # Check if bot is running
     result = subprocess.run(
         ["sudo", "systemctl", "is-active", "telegram-kiro-bot"],
         capture_output=True,
-        text=True
+        text=True,
     )
-    
+
     if result.stdout.strip() != "active":
         print("❌ Bot service is not running!")
         print("Start it with: sudo systemctl start telegram-kiro-bot")
         sys.exit(1)
-    
+
     print("✅ Bot service is running")
     print()
-    
+
     # Run monitoring
     exit_code = monitor_logs(duration=60)
     sys.exit(exit_code)

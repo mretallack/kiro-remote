@@ -42,7 +42,14 @@ KiroSession = KiroSessionACP
 
 
 class TelegramBot:
-    def __init__(self, token, authorized_user, attachments_dir=None, chunk_timeout=2.0, typing_refresh_interval=4.0):
+    def __init__(
+        self,
+        token,
+        authorized_user,
+        attachments_dir=None,
+        chunk_timeout=2.0,
+        typing_refresh_interval=4.0,
+    ):
         self.token = token
         self.authorized_user = authorized_user
         self.attachments_dir = Path(
@@ -50,11 +57,11 @@ class TelegramBot:
         ).expanduser()
         self._setup_attachments_dir()
         self.kiro = KiroSessionACP()
-        
+
         # Configure timeouts
         self.kiro.chunk_timeout = chunk_timeout
         self.kiro.typing_refresh_interval = typing_refresh_interval
-        
+
         # Build application
         self.application = Application.builder().token(token).build()
         self.loop = None
@@ -883,7 +890,11 @@ if __name__ == "__main__":
         "bot", "attachments_dir", fallback="~/.kiro/bot_attachments"
     )
     CHUNK_TIMEOUT = config.getfloat("bot", "chunk_timeout", fallback=2.0)
-    TYPING_REFRESH_INTERVAL = config.getfloat("bot", "typing_refresh_interval", fallback=4.0)
+    TYPING_REFRESH_INTERVAL = config.getfloat(
+        "bot", "typing_refresh_interval", fallback=4.0
+    )
 
-    bot = TelegramBot(TOKEN, AUTHORIZED_USER, ATTACHMENTS_DIR, CHUNK_TIMEOUT, TYPING_REFRESH_INTERVAL)
+    bot = TelegramBot(
+        TOKEN, AUTHORIZED_USER, ATTACHMENTS_DIR, CHUNK_TIMEOUT, TYPING_REFRESH_INTERVAL
+    )
     bot.run()
