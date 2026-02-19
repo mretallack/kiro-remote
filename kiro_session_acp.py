@@ -33,6 +33,14 @@ class KiroSessionACP:
         # Callback for sending messages back to Telegram
         self.send_to_telegram = None
         self.current_chat_id = None
+        
+        # Store application and event loop reference for typing indicator
+        self.application = None
+        self.event_loop = None
+
+        # Configuration
+        self.chunk_timeout = 2.0
+        self.typing_refresh_interval = 4.0
 
         # Worker thread
         self.worker_thread = None
@@ -118,29 +126,39 @@ class KiroSessionACP:
         session = agent_data["session"]
         agent_data["chat_id"] = chat_id
         agent_data["chunks"] = []  # Reset chunks for new message
+        
+        # Start typing indicator thread
+        agent_data["typing_stop_event"].clear()
+        agent_data["typing_thread"] = threading.Thread(
+            target=self._typing_indicator_loop,
+            args=(chat_id, agent_data["typing_stop_event"]),
+            daemon=True
+        )
+        agent_data["typing_thread"].start()
+        logger.info(f"Worker: Started typing indicator thread")
 
         # Set up callbacks that reference agent_data
         def on_chunk(content):
             logger.debug(f"Worker: Received chunk: {content[:50]}")
-            agent_data["chunks"].append(content)
+            with agent_data["chunk_lock"]:
+                agent_data["chunks"].append(content)
+                
+                # Cancel existing timer if active
+                if agent_data["chunk_timer"]:
+                    agent_data["chunk_timer"].cancel()
+                
+                # Create new timer to flush chunks after timeout
+                agent_data["chunk_timer"] = threading.Timer(
+                    self.chunk_timeout,
+                    lambda: self._flush_chunks(agent_data)
+                )
+                agent_data["chunk_timer"].start()
 
         def on_tool_call(tool):
             tool_name = tool.get("title", "unknown")
             logger.info(f"Worker: Tool call: {tool_name}")
-
-            # Extract command and purpose for better display
-            raw_input = tool.get("rawInput", {})
-            command = raw_input.get("command", "")
-            purpose = raw_input.get("__tool_use_purpose", "")
-
-            # Format message with command details
-            message_parts = [f"🔧 {tool_name}"]
-            if purpose:
-                message_parts.append(f"\n{purpose}")
-            if command and command not in tool_name:
-                message_parts.append(f"\n`{command}`")
-
-            self._send_to_telegram_sync(agent_data["chat_id"], "\n".join(message_parts))
+            # Don't send tool start notifications to Telegram
+            # Users will see tool outputs when they complete
 
         def on_tool_update(update):
             """Handle tool completion and send stdout/stderr."""
@@ -154,45 +172,67 @@ class KiroSessionACP:
             if not items:
                 return
 
-            # Extract stdout/stderr from first item
-            output_data = items[0].get("Json", {})
-            stdout = output_data.get("stdout", "").strip()
-            stderr = output_data.get("stderr", "").strip()
-            exit_status = output_data.get("exit_status", "")
+            # Extract output from first item
+            first_item = items[0]
+            
+            # Handle bash command output (Json format with stdout/stderr)
+            if "Json" in first_item:
+                output_data = first_item.get("Json", {})
+                stdout = output_data.get("stdout", "").strip()
+                stderr = output_data.get("stderr", "").strip()
 
-            if not stdout and not stderr:
-                return
+                if not stdout and not stderr:
+                    return
 
-            # Truncate if too long (first 1000 + last 1000 bytes)
-            def truncate_output(text, max_bytes=1000):
-                if len(text) <= max_bytes * 2:
-                    return text
-                return f"{text[:max_bytes]}\n\n... (truncated {len(text) - max_bytes * 2} bytes) ...\n\n{text[-max_bytes:]}"
+                # Truncate if too long (first 1000 + last 1000 bytes)
+                def truncate_output(text, max_bytes=1000):
+                    if len(text) <= max_bytes * 2:
+                        return text
+                    return f"{text[:max_bytes]}\n\n... (truncated {len(text) - max_bytes * 2} bytes) ...\n\n{text[-max_bytes:]}"
 
-            output_parts = []
-            if stdout:
-                output_parts.append(f"**Output:**\n```\n{truncate_output(stdout)}\n```")
-            if stderr:
-                output_parts.append(f"**stderr:**\n```\n{truncate_output(stderr)}\n```")
+                output_parts = []
+                if stdout:
+                    output_parts.append(f"**Output:**\n```\n{truncate_output(stdout)}\n```")
+                if stderr:
+                    output_parts.append(f"**stderr:**\n```\n{truncate_output(stderr)}\n```")
 
-            if output_parts:
-                message = "\n".join(output_parts)
+                if output_parts:
+                    message = "\n".join(output_parts)
+                    self._send_to_telegram_sync(agent_data["chat_id"], message)
+            
+            # Handle file read output (Text format)
+            elif "Text" in first_item:
+                text_content = first_item.get("Text", "").strip()
+                
+                if not text_content:
+                    return
+                
+                # Truncate if too long
+                max_chars = 2000
+                if len(text_content) > max_chars:
+                    text_content = f"{text_content[:max_chars]}\n\n... (truncated {len(text_content) - max_chars} chars) ..."
+                
+                message = f"**File Content:**\n```\n{text_content}\n```"
                 self._send_to_telegram_sync(agent_data["chat_id"], message)
 
         def on_turn_end():
             logger.info(f"Worker: on_turn_end called")
-            logger.info(f"Worker: agent_data keys: {agent_data.keys()}")
-            logger.info(f"Worker: chunks type: {type(agent_data.get('chunks'))}")
-            logger.info(f"Worker: chunks length: {len(agent_data.get('chunks', []))}")
-            chunks = agent_data["chunks"]
-            logger.info(f"Worker: Turn end - {len(chunks)} chunks accumulated")
-            logger.info(f"Worker: chunks bool: {bool(chunks)}")
-            if chunks:
-                message = "".join(chunks)
-                logger.info(f"Worker: Sending final message (length: {len(message)})")
-                self._send_to_telegram_sync(agent_data["chat_id"], message)
-            else:
-                logger.warning(f"Worker: Turn end but no chunks!")
+            
+            # Cancel chunk timer if active
+            if agent_data["chunk_timer"]:
+                agent_data["chunk_timer"].cancel()
+                agent_data["chunk_timer"] = None
+            
+            # Flush any remaining chunks
+            self._flush_chunks(agent_data)
+            
+            # Stop typing indicator
+            agent_data["typing_stop_event"].set()
+            if agent_data["typing_thread"]:
+                agent_data["typing_thread"].join(timeout=1.0)
+                agent_data["typing_thread"] = None
+            
+            logger.info(f"Worker: Turn end complete")
 
         # Clear old callbacks and register new ones
         session.chunk_callbacks = []
@@ -214,6 +254,13 @@ class KiroSessionACP:
             import traceback
 
             traceback.print_exc()
+            
+            # Stop typing indicator on error
+            agent_data["typing_stop_event"].set()
+            if agent_data["typing_thread"]:
+                agent_data["typing_thread"].join(timeout=1.0)
+                agent_data["typing_thread"] = None
+            
             self._send_error(chat_id, str(e))
 
     def _handle_start_session(self, msg: Dict[str, Any]):
@@ -245,6 +292,10 @@ class KiroSessionACP:
                 "chat_id": None,  # Store chat_id per agent
                 "models": session_result.get("models", {}),  # Store models info
                 "modes": session_result.get("modes", {}),  # Store modes info
+                "chunk_timer": None,  # Timer for chunk buffering
+                "chunk_lock": threading.Lock(),  # Thread safety for chunks
+                "typing_thread": None,  # Thread for typing indicator
+                "typing_stop_event": threading.Event(),  # Signal to stop typing
             }
 
             self.active_agent = agent_name
@@ -312,6 +363,41 @@ class KiroSessionACP:
             session = self.agents[self.active_agent]["session"]
             session.cancel()
             logger.info("Worker: Cancelled operation")
+
+    def _flush_chunks(self, agent_data: Dict[str, Any]):
+        """Flush buffered chunks to Telegram."""
+        with agent_data["chunk_lock"]:
+            chunks = agent_data["chunks"]
+            if chunks:
+                message = "".join(chunks)
+                logger.info(f"Worker: Flushing {len(chunks)} chunks ({len(message)} chars)")
+                try:
+                    self._send_to_telegram_sync(agent_data["chat_id"], message)
+                except Exception as e:
+                    logger.error(f"Error flushing chunks: {e}")
+                chunks.clear()
+
+    def _typing_indicator_loop(self, chat_id: int, stop_event: threading.Event):
+        """Background thread that refreshes typing indicator."""
+        logger.info(f"Worker: Typing indicator thread started for chat {chat_id}")
+        while not stop_event.is_set():
+            try:
+                # Send typing action via async bridge
+                if self.application and self.event_loop:
+                    from telegram.constants import ChatAction
+                    asyncio.run_coroutine_threadsafe(
+                        self.application.bot.send_chat_action(
+                            chat_id=chat_id, action=ChatAction.TYPING
+                        ),
+                        self.event_loop
+                    )
+            except Exception as e:
+                logger.error(f"Typing indicator error: {e}")
+            
+            # Wait for interval or until stop signal
+            stop_event.wait(self.typing_refresh_interval)
+        
+        logger.info(f"Worker: Typing indicator thread stopped for chat {chat_id}")
 
     def _send_to_telegram_sync(self, chat_id: int, text: str):
         """Send message to Telegram from worker thread."""

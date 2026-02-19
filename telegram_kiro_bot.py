@@ -42,7 +42,7 @@ KiroSession = KiroSessionACP
 
 
 class TelegramBot:
-    def __init__(self, token, authorized_user, attachments_dir=None):
+    def __init__(self, token, authorized_user, attachments_dir=None, chunk_timeout=2.0, typing_refresh_interval=4.0):
         self.token = token
         self.authorized_user = authorized_user
         self.attachments_dir = Path(
@@ -50,6 +50,14 @@ class TelegramBot:
         ).expanduser()
         self._setup_attachments_dir()
         self.kiro = KiroSessionACP()
+        
+        # Configure timeouts
+        self.kiro.chunk_timeout = chunk_timeout
+        self.kiro.typing_refresh_interval = typing_refresh_interval
+        
+        # Build application
+        self.application = Application.builder().token(token).build()
+        self.loop = None
 
         # Set up async callback for Kiro to send messages back
         async def send_to_telegram(chat_id, text):
@@ -58,6 +66,7 @@ class TelegramBot:
             )
 
         self.kiro.send_to_telegram = send_to_telegram
+        self.kiro.application = self.application
 
         # Conversation state for multi-step interactions
         self.user_states = {}  # chat_id -> state dict
@@ -65,9 +74,6 @@ class TelegramBot:
         # Start fresh session (load_state removed for now - will add back later)
         print(f"[DEBUG] Starting fresh session")
         self.kiro.start_session()
-
-        self.application = Application.builder().token(token).build()
-        self.loop = None
 
         # Add message and command handlers
         self.application.add_handler(
@@ -193,6 +199,8 @@ class TelegramBot:
             self.loop = asyncio.get_running_loop()
             # Set the loop on the callback so worker thread can use it
             self.kiro.send_to_telegram.loop = self.loop
+            # Also set it on kiro for typing indicator
+            self.kiro.event_loop = self.loop
             logger.info(f"Event loop set: {self.loop}")
 
         username = update.effective_user.username
@@ -874,6 +882,8 @@ if __name__ == "__main__":
     ATTACHMENTS_DIR = config.get(
         "bot", "attachments_dir", fallback="~/.kiro/bot_attachments"
     )
+    CHUNK_TIMEOUT = config.getfloat("bot", "chunk_timeout", fallback=2.0)
+    TYPING_REFRESH_INTERVAL = config.getfloat("bot", "typing_refresh_interval", fallback=4.0)
 
-    bot = TelegramBot(TOKEN, AUTHORIZED_USER, ATTACHMENTS_DIR)
+    bot = TelegramBot(TOKEN, AUTHORIZED_USER, ATTACHMENTS_DIR, CHUNK_TIMEOUT, TYPING_REFRESH_INTERVAL)
     bot.run()

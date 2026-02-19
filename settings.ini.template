@@ -7,3 +7,7 @@ auto_trust = true
 progress_updates = true
 # Directory for storing downloaded attachments (images, documents, etc.)
 attachments_dir = ~/.kiro/bot_attachments
+# Timeout in seconds before flushing buffered text chunks (default: 2.0)
+chunk_timeout = 2.0
+# Interval in seconds between typing indicator refreshes (default: 4.0)
+typing_refresh_interval = 4.0
