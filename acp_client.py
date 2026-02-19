@@ -173,7 +173,7 @@ class ACPClient:
             self.process.stdin.flush()
 
             response = response_queue.get(
-                timeout=120
+                timeout=300
             )  # Increased timeout for long-running prompts
 
             if "error" in response:

@@ -262,3 +262,30 @@ View logs with:
 ```bash
 sudo journalctl -u telegram-kiro-bot -f
 ```
+
+## TODO / Future Enhancements
+
+### Context Management
+- **Context usage warnings**: Alert user when context window usage exceeds 80%
+- **Context reset command**: Add command to clear context and start fresh
+
+### Tool Execution Feedback
+- **Long-running tool notifications**: Show "Still running..." message for commands taking > 10 seconds
+- **Tool execution time**: Display how long commands took to complete
+- **Progress indicators**: Show progress for multi-step operations
+
+### Error Handling
+- **Enhanced error messages**: Include more context and suggestions for common errors
+- **Error recovery suggestions**: Provide actionable steps when operations fail
+- **Retry mechanism**: Automatic retry for transient failures
+
+### Performance Monitoring
+- **Response time tracking**: Log and optionally display response times
+- **Token usage display**: Show token consumption per message
+- **Session statistics**: Track messages, tools used, errors per session
+
+### User Experience
+- **Configurable chunk timeout**: Per-user or per-agent timeout settings
+- **Typing indicator customization**: Option to disable or adjust refresh rate
+- **Tool output filtering**: Option to hide/show specific tool outputs
+- **Message formatting options**: Markdown vs HTML, code highlighting preferences
