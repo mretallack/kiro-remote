@@ -485,6 +485,7 @@ class KiroSessionACP:
         elif "JSON-RPC error" in error:
             # Extract the actual error message
             import re
+
             match = re.search(r"'data': '([^']+)'", error)
             if match:
                 user_message = f"❌ Error: {match.group(1)}"
@@ -492,7 +493,7 @@ class KiroSessionACP:
                 user_message = f"❌ Error: {error}"
         else:
             user_message = f"❌ Error: {error}"
-        
+
         self._send_to_telegram_sync(chat_id, user_message)
 
     # Public API (called from async layer)
