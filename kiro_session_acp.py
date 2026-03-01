@@ -416,12 +416,14 @@ class KiroSessionACP:
             # Schedule the async call
             try:
                 logger.debug(f"Worker: Scheduling async call to Telegram")
-                asyncio.run_coroutine_threadsafe(
+                future = asyncio.run_coroutine_threadsafe(
                     self.send_to_telegram(chat_id, text), self.send_to_telegram.loop
                 )
-                logger.debug(f"Worker: Async call scheduled successfully")
+                # Wait for the message to actually be sent (with timeout)
+                future.result(timeout=10.0)
+                logger.debug(f"Worker: Message sent to Telegram successfully")
             except Exception as e:
-                logger.error(f"Error scheduling telegram message: {e}")
+                logger.error(f"Error sending telegram message: {e}")
                 import traceback
 
                 traceback.print_exc()
@@ -477,7 +479,22 @@ class KiroSessionACP:
 
     def _send_error(self, chat_id: int, error: str):
         """Send error message to Telegram."""
-        self._send_to_telegram_sync(chat_id, f"❌ Error: {error}")
+        # Try to extract meaningful error from JSON-RPC error
+        if "monthly usage limit has been reached" in error:
+            user_message = "❌ Error: Monthly usage limit has been reached. Please check your Kiro account."
+        elif "JSON-RPC error" in error:
+            # Extract the actual error message
+            import re
+
+            match = re.search(r"'data': '([^']+)'", error)
+            if match:
+                user_message = f"❌ Error: {match.group(1)}"
+            else:
+                user_message = f"❌ Error: {error}"
+        else:
+            user_message = f"❌ Error: {error}"
+
+        self._send_to_telegram_sync(chat_id, user_message)
 
     # Public API (called from async layer)
 
