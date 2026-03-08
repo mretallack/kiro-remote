@@ -358,6 +358,31 @@ class TelegramBot:
                     await self.list_chats(update, context)
                     return True
 
+        # Context commands
+        elif normalized_text.startswith("/context"):
+            print(f"[DEBUG] Intercepted context command")
+            parts = normalized_text.split()
+            if len(parts) == 1:
+                # Just "/context" - show usage
+                await self.show_context_usage(update, context)
+                return True
+            elif len(parts) >= 2:
+                subcommand = parts[1]
+                if subcommand == "show":
+                    await self.execute_context_command(update, context, "/context show")
+                    return True
+                elif subcommand == "clear":
+                    await self.execute_context_command(
+                        update, context, "/context clear"
+                    )
+                    return True
+
+        # Compact command
+        elif normalized_text == "/compact":
+            print(f"[DEBUG] Intercepted compact command")
+            await self.trigger_compaction(update, context)
+            return True
+
         return False
 
     async def start_agent_creation(
@@ -850,6 +875,78 @@ class TelegramBot:
                 self._send_typing_async(chat_id), self.loop
             )
             # Don't wait for result to keep it non-blocking
+
+    async def show_context_usage(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
+        """Show current context usage"""
+        if not self.kiro.active_agent or self.kiro.active_agent not in self.kiro.agents:
+            await update.message.reply_text("❌ No active agent")
+            return
+
+        agent_data = self.kiro.agents[self.kiro.active_agent]
+        session_id = agent_data["session_id"]
+        usage = self.kiro.context_tracker.get_usage(session_id)
+
+        if usage is None:
+            await update.message.reply_text("📊 Context usage: Unknown")
+        else:
+            await update.message.reply_text(f"📊 Context usage: {usage:.1f}%")
+
+    async def execute_context_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, command: str
+    ):
+        """Execute a /context subcommand via ACP"""
+        if not self.kiro.active_agent or self.kiro.active_agent not in self.kiro.agents:
+            await update.message.reply_text("❌ No active agent")
+            return
+
+        agent_data = self.kiro.agents[self.kiro.active_agent]
+        session_id = agent_data["session_id"]
+        client = agent_data["client"]
+
+        try:
+            from text_utils import strip_ansi, truncate_message
+
+            result = client.execute_command(session_id, command)
+            output = result.get("output", "")
+
+            if output:
+                # Strip ANSI codes and truncate
+                clean_output = strip_ansi(output)
+                final_output = truncate_message(clean_output)
+                await update.message.reply_text(final_output)
+            else:
+                await update.message.reply_text("✅ Command executed")
+
+        except Exception as e:
+            logger.error(f"Error executing context command: {e}")
+            await update.message.reply_text(f"❌ Error: {str(e)}")
+
+    async def trigger_compaction(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
+        """Trigger manual compaction"""
+        if not self.kiro.active_agent or self.kiro.active_agent not in self.kiro.agents:
+            await update.message.reply_text("❌ No active agent")
+            return
+
+        agent_data = self.kiro.agents[self.kiro.active_agent]
+        session_id = agent_data["session_id"]
+        client = agent_data["client"]
+
+        try:
+            await update.message.reply_text("🔄 Compacting conversation...")
+            result = client.execute_command(session_id, "/compact")
+
+            # Reset warning state after compaction
+            self.kiro.context_tracker.reset_warnings(session_id)
+
+            await update.message.reply_text("✅ Compaction complete")
+
+        except Exception as e:
+            logger.error(f"Error triggering compaction: {e}")
+            await update.message.reply_text(f"❌ Compaction failed: {str(e)}")
 
     async def _send_typing_async(self, chat_id):
         """Internal async method to send typing indicator"""

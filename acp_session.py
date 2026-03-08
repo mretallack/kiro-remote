@@ -35,6 +35,7 @@ class ACPSession:
         self.commands_available_callbacks = []
         self.compaction_status_callbacks = []
         self.mcp_event_callbacks = []
+        self.metadata_callbacks = []
 
         # Register notification handler
         self.client.on_notification(self._handle_notification)
@@ -103,8 +104,10 @@ class ACPSession:
         ]:
             self._handle_mcp_event(method, params)
         elif method == "_kiro.dev/metadata":
-            # Metadata notifications (like contextUsagePercentage) - just log at debug level
+            # Metadata notifications (like contextUsagePercentage)
             logger.debug(f"ACPSession: Metadata: {params}")
+            for callback in self.metadata_callbacks:
+                callback(params)
         else:
             # Log unhandled notification methods
             logger.warning(f"ACPSession: UNHANDLED notification method: {method}")
@@ -229,6 +232,10 @@ class ACPSession:
     def on_mcp_event(self, callback: Callable[[str, Dict[str, Any]], None]) -> None:
         """Register callback for MCP events."""
         self.mcp_event_callbacks.append(callback)
+
+    def on_metadata(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        """Register callback for metadata notifications."""
+        self.metadata_callbacks.append(callback)
 
     def cancel(self) -> None:
         """Cancel the current operation."""

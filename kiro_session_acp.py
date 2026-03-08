@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, Optional
 
 from acp_client import ACPClient
 from acp_session import ACPSession
+from context_tracker import ContextTracker
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,9 @@ class KiroSessionACP:
         # Worker thread
         self.worker_thread = None
         self.running = False
+
+        # Context tracking
+        self.context_tracker = ContextTracker()
 
     def get_available_models(self):
         """Get list of available models for active agent."""
@@ -284,6 +288,56 @@ class KiroSessionACP:
             )
             session_id = session_result["sessionId"]
             session = ACPSession(session_id, client)
+
+            # Register metadata callback for context tracking
+            def on_metadata(params):
+                context_usage = params.get("contextUsagePercentage")
+                if context_usage is not None:
+                    logger.debug(f"Worker: Context usage: {context_usage}%")
+                    self.context_tracker.update_usage(session_id, context_usage)
+
+                    # Check for warnings
+                    if self.context_tracker.should_alert(session_id):
+                        logger.info(f"Worker: Context usage alert at {context_usage}%")
+                        # Send alert to user
+                        if hasattr(self, "send_to_telegram") and self.send_to_telegram:
+                            import asyncio
+
+                            if hasattr(self, "event_loop") and self.event_loop:
+                                asyncio.run_coroutine_threadsafe(
+                                    self.send_to_telegram(
+                                        agent_data.get("chat_id"),
+                                        f"🚨 Context usage: {context_usage:.1f}%. Recommend using \\compact now",
+                                    ),
+                                    self.event_loop,
+                                )
+                    elif self.context_tracker.should_warn(session_id):
+                        logger.info(
+                            f"Worker: Context usage warning at {context_usage}%"
+                        )
+                        # Send warning to user
+                        if hasattr(self, "send_to_telegram") and self.send_to_telegram:
+                            import asyncio
+
+                            if hasattr(self, "event_loop") and self.event_loop:
+                                asyncio.run_coroutine_threadsafe(
+                                    self.send_to_telegram(
+                                        agent_data.get("chat_id"),
+                                        f"⚠️ Context usage: {context_usage:.1f}%. Consider using \\compact",
+                                    ),
+                                    self.event_loop,
+                                )
+
+            session.on_metadata(on_metadata)
+
+            # Register compaction status callback
+            def on_compaction_status(params):
+                status = params.get("status")
+                logger.info(f"Worker: Compaction status: {status}")
+                # Optionally notify user of compaction progress
+                # For now, just log it
+
+            session.on_compaction_status(on_compaction_status)
 
             # Store for this agent
             self.agents[agent_name] = {

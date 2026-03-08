@@ -97,6 +97,18 @@ Files are saved with the pattern: `{timestamp}_{user_id}_{filename}`
 \cancel               # Cancel the current running operation (immediate response)
 ```
 
+### Context Management
+```
+\context              # Show current context usage percentage
+\context show         # Show detailed context information
+\context clear        # Clear context rules
+\compact              # Trigger manual conversation compaction
+```
+
+**Context Usage Warnings**: The bot automatically monitors context usage and sends warnings:
+- ⚠️ Warning at 80%: "Consider using \compact"
+- 🚨 Alert at 90%: "Recommend compacting now"
+
 ### Model Management
 ```
 \model list           # List all available models and show current model
@@ -266,8 +278,10 @@ sudo journalctl -u telegram-kiro-bot -f
 ## TODO / Future Enhancements
 
 ### Context Management
-- **Context usage warnings**: Alert user when context window usage exceeds 80%
-- **Context reset command**: Add command to clear context and start fresh
+- ✅ **Context usage warnings**: Alert user when context window usage exceeds 80%
+- ✅ **Context reset command**: Add command to clear context and start fresh
+- **Automatic compaction**: Trigger compaction automatically at configurable threshold
+- **Context usage history**: Track and display usage over time
 
 ### Tool Execution Feedback
 - **Long-running tool notifications**: Show "Still running..." message for commands taking > 10 seconds
