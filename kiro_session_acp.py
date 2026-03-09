@@ -332,10 +332,17 @@ class KiroSessionACP:
 
             # Register compaction status callback
             def on_compaction_status(params):
-                status = params.get("status")
+                status = params.get("status", {})
+                status_type = status.get("type")
                 logger.info(f"Worker: Compaction status: {status}")
-                # Optionally notify user of compaction progress
-                # For now, just log it
+                
+                if status_type == "started":
+                    self._send_to_telegram_sync("🔄 Compacting conversation...", chat_id)
+                elif status_type == "completed":
+                    self._send_to_telegram_sync("✅ Compaction complete", chat_id)
+                elif status_type == "failed":
+                    error = status.get("error", "Unknown error")
+                    self._send_to_telegram_sync(f"❌ Compaction failed: {error}", chat_id)
 
             session.on_compaction_status(on_compaction_status)
 

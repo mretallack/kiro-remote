@@ -108,6 +108,10 @@ class ACPSession:
             logger.debug(f"ACPSession: Metadata: {params}")
             for callback in self.metadata_callbacks:
                 callback(params)
+        elif method.startswith("_kiro.dev/"):
+            # Unknown Kiro extension notification
+            logger.info(f"ACPSession: Unknown Kiro notification: {method}")
+            logger.debug(f"ACPSession: Params: {json.dumps(params, indent=2)}")
         else:
             # Log unhandled notification methods
             logger.warning(f"ACPSession: UNHANDLED notification method: {method}")
