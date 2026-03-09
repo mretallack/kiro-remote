@@ -304,7 +304,11 @@ class KiroSessionACP:
                     if self.context_tracker.should_alert(session_id):
                         logger.info(f"Worker: Context usage alert at {context_usage}%")
                         # Send alert to user
-                        if current_chat_id and hasattr(self, "send_to_telegram") and self.send_to_telegram:
+                        if (
+                            current_chat_id
+                            and hasattr(self, "send_to_telegram")
+                            and self.send_to_telegram
+                        ):
                             import asyncio
 
                             if hasattr(self, "event_loop") and self.event_loop:
@@ -320,7 +324,11 @@ class KiroSessionACP:
                             f"Worker: Context usage warning at {context_usage}%"
                         )
                         # Send warning to user
-                        if current_chat_id and hasattr(self, "send_to_telegram") and self.send_to_telegram:
+                        if (
+                            current_chat_id
+                            and hasattr(self, "send_to_telegram")
+                            and self.send_to_telegram
+                        ):
                             import asyncio
 
                             if hasattr(self, "event_loop") and self.event_loop:
@@ -339,29 +347,39 @@ class KiroSessionACP:
                 status = params.get("status", {})
                 status_type = status.get("type")
                 logger.info(f"Worker: Compaction status: {status}")
-                
+
                 # Get chat_id from agent data
                 agent_data = self.agents.get(agent_name, {})
                 current_chat_id = agent_data.get("chat_id")
-                
-                if current_chat_id and hasattr(self, "send_to_telegram") and self.send_to_telegram:
+
+                if (
+                    current_chat_id
+                    and hasattr(self, "send_to_telegram")
+                    and self.send_to_telegram
+                ):
                     import asyncio
-                    
+
                     if hasattr(self, "event_loop") and self.event_loop:
                         if status_type == "started":
                             asyncio.run_coroutine_threadsafe(
-                                self.send_to_telegram(current_chat_id, "🔄 Compacting conversation..."),
+                                self.send_to_telegram(
+                                    current_chat_id, "🔄 Compacting conversation..."
+                                ),
                                 self.event_loop,
                             )
                         elif status_type == "completed":
                             asyncio.run_coroutine_threadsafe(
-                                self.send_to_telegram(current_chat_id, "✅ Compaction complete"),
+                                self.send_to_telegram(
+                                    current_chat_id, "✅ Compaction complete"
+                                ),
                                 self.event_loop,
                             )
                         elif status_type == "failed":
                             error = status.get("error", "Unknown error")
                             asyncio.run_coroutine_threadsafe(
-                                self.send_to_telegram(current_chat_id, f"❌ Compaction failed: {error}"),
+                                self.send_to_telegram(
+                                    current_chat_id, f"❌ Compaction failed: {error}"
+                                ),
                                 self.event_loop,
                             )
 
