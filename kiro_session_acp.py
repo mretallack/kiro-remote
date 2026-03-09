@@ -336,13 +336,30 @@ class KiroSessionACP:
                 status_type = status.get("type")
                 logger.info(f"Worker: Compaction status: {status}")
                 
-                if status_type == "started":
-                    self._send_to_telegram_sync("🔄 Compacting conversation...", chat_id)
-                elif status_type == "completed":
-                    self._send_to_telegram_sync("✅ Compaction complete", chat_id)
-                elif status_type == "failed":
-                    error = status.get("error", "Unknown error")
-                    self._send_to_telegram_sync(f"❌ Compaction failed: {error}", chat_id)
+                # Get chat_id from agent data
+                agent_data = self.agents.get(agent_name, {})
+                current_chat_id = agent_data.get("chat_id")
+                
+                if current_chat_id and hasattr(self, "send_to_telegram") and self.send_to_telegram:
+                    import asyncio
+                    
+                    if hasattr(self, "event_loop") and self.event_loop:
+                        if status_type == "started":
+                            asyncio.run_coroutine_threadsafe(
+                                self.send_to_telegram(current_chat_id, "🔄 Compacting conversation..."),
+                                self.event_loop,
+                            )
+                        elif status_type == "completed":
+                            asyncio.run_coroutine_threadsafe(
+                                self.send_to_telegram(current_chat_id, "✅ Compaction complete"),
+                                self.event_loop,
+                            )
+                        elif status_type == "failed":
+                            error = status.get("error", "Unknown error")
+                            asyncio.run_coroutine_threadsafe(
+                                self.send_to_telegram(current_chat_id, f"❌ Compaction failed: {error}"),
+                                self.event_loop,
+                            )
 
             session.on_compaction_status(on_compaction_status)
 
