@@ -375,12 +375,12 @@ class TelegramBot:
             elif len(parts) >= 2:
                 subcommand = parts[1]
                 if subcommand == "show":
-                    await self.execute_context_command(update, context, "/context show")
+                    # Send as regular message, not as command
+                    self.kiro.send_message("/context show", update.effective_chat.id)
                     return True
                 elif subcommand == "clear":
-                    await self.execute_context_command(
-                        update, context, "/context clear"
-                    )
+                    # Send as regular message, not as command
+                    self.kiro.send_message("/context clear", update.effective_chat.id)
                     return True
 
         # Compact command
