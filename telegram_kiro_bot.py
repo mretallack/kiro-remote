@@ -386,7 +386,8 @@ class TelegramBot:
         # Compact command
         elif normalized_text == "/compact":
             print(f"[DEBUG] Intercepted compact command")
-            await self.trigger_compaction(update, context)
+            # Send as regular message, not as command
+            self.kiro.send_message("/compact", update.effective_chat.id)
             return True
 
         return False
