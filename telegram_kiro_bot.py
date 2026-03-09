@@ -257,6 +257,12 @@ class TelegramBot:
         normalized_text = message_text.replace("\\", "/")
         print(f"[DEBUG] Normalized text: {normalized_text}")
 
+        # Help command
+        if normalized_text == "/help":
+            print(f"[DEBUG] Intercepted help command")
+            await self.show_help(update, context)
+            return True
+
         # Usage command
         if normalized_text == "/usage":
             print(f"[DEBUG] Intercepted usage command")
@@ -469,6 +475,39 @@ class TelegramBot:
 
             print(f"[DEBUG] Traceback: {traceback.format_exc()}")
             await update.message.reply_text(f"Error: {e}")
+
+    async def show_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show all available bot commands"""
+        help_text = """📚 **Telegram Kiro Bot Commands**
+
+**Agent Management**
+\\agent list - List all agents
+\\agent swap <name> - Switch to agent
+\\agent create <name> - Create new agent
+\\agent delete <name> - Delete agent
+
+**Conversation Management**
+\\chat save <name> - Save conversation
+\\chat load <name> - Load conversation
+\\chat list - List saved conversations
+
+**Context Management**
+\\context - Show context usage
+\\context show - Detailed context info
+\\context clear - Clear context rules
+\\compact - Trigger compaction
+
+**Model Management**
+\\model list - List available models
+\\model <model_id> - Set model
+
+**Operation Control**
+\\cancel - Cancel current operation
+
+**Help**
+\\help - Show this help message
+"""
+        await update.message.reply_text(help_text, parse_mode="Markdown")
 
     async def show_usage(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle intercepted /usage command - show credits and billing info"""
