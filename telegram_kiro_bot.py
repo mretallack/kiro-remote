@@ -478,36 +478,36 @@ class TelegramBot:
 
     async def show_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show all available bot commands"""
-        help_text = """📚 **Telegram Kiro Bot Commands**
+        help_text = """📚 Telegram Kiro Bot Commands
 
-**Agent Management**
+Agent Management
 \\agent list - List all agents
 \\agent swap <name> - Switch to agent
 \\agent create <name> - Create new agent
 \\agent delete <name> - Delete agent
 
-**Conversation Management**
+Conversation Management
 \\chat save <name> - Save conversation
 \\chat load <name> - Load conversation
 \\chat list - List saved conversations
 
-**Context Management**
+Context Management
 \\context - Show context usage
 \\context show - Detailed context info
 \\context clear - Clear context rules
 \\compact - Trigger compaction
 
-**Model Management**
+Model Management
 \\model list - List available models
 \\model <model_id> - Set model
 
-**Operation Control**
+Operation Control
 \\cancel - Cancel current operation
 
-**Help**
+Help
 \\help - Show this help message
 """
-        await update.message.reply_text(help_text, parse_mode="Markdown")
+        await update.message.reply_text(help_text)
 
     async def show_usage(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle intercepted /usage command - show credits and billing info"""
