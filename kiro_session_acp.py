@@ -296,17 +296,21 @@ class KiroSessionACP:
                     logger.debug(f"Worker: Context usage: {context_usage}%")
                     self.context_tracker.update_usage(session_id, context_usage)
 
+                    # Get agent data for chat_id
+                    agent_data = self.agents.get(agent_name, {})
+                    current_chat_id = agent_data.get("chat_id")
+
                     # Check for warnings
                     if self.context_tracker.should_alert(session_id):
                         logger.info(f"Worker: Context usage alert at {context_usage}%")
                         # Send alert to user
-                        if hasattr(self, "send_to_telegram") and self.send_to_telegram:
+                        if current_chat_id and hasattr(self, "send_to_telegram") and self.send_to_telegram:
                             import asyncio
 
                             if hasattr(self, "event_loop") and self.event_loop:
                                 asyncio.run_coroutine_threadsafe(
                                     self.send_to_telegram(
-                                        agent_data.get("chat_id"),
+                                        current_chat_id,
                                         f"🚨 Context usage: {context_usage:.1f}%. Recommend using \\compact now",
                                     ),
                                     self.event_loop,
@@ -316,13 +320,13 @@ class KiroSessionACP:
                             f"Worker: Context usage warning at {context_usage}%"
                         )
                         # Send warning to user
-                        if hasattr(self, "send_to_telegram") and self.send_to_telegram:
+                        if current_chat_id and hasattr(self, "send_to_telegram") and self.send_to_telegram:
                             import asyncio
 
                             if hasattr(self, "event_loop") and self.event_loop:
                                 asyncio.run_coroutine_threadsafe(
                                     self.send_to_telegram(
-                                        agent_data.get("chat_id"),
+                                        current_chat_id,
                                         f"⚠️ Context usage: {context_usage:.1f}%. Consider using \\compact",
                                     ),
                                     self.event_loop,
