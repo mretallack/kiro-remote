@@ -131,6 +131,30 @@ class KiroSessionACP:
         agent_data["chat_id"] = chat_id
         agent_data["chunks"] = []  # Reset chunks for new message
 
+        # Handle /compact specially - it goes through send_prompt but kiro-cli
+        # doesn't return a prompt response for it, so it blocks for 600s.
+        # Run it in a background thread so the worker queue isn't blocked.
+        if text.strip().lower() == "/compact":
+            agent_data["typing_stop_event"].clear()
+            agent_data["typing_thread"] = threading.Thread(
+                target=self._typing_indicator_loop,
+                args=(chat_id, agent_data["typing_stop_event"]),
+                daemon=True,
+            )
+            agent_data["typing_thread"].start()
+
+            def _compact_bg():
+                try:
+                    session.send_message(text)
+                except Exception:
+                    pass
+                # Ensure typing stops even if callback didn't fire
+                agent_data["typing_stop_event"].set()
+
+            threading.Thread(target=_compact_bg, daemon=True).start()
+            logger.info("Worker: Sent /compact in background thread")
+            return
+
         # Start typing indicator thread
         agent_data["typing_stop_event"].clear()
         agent_data["typing_thread"] = threading.Thread(
@@ -374,6 +398,9 @@ class KiroSessionACP:
                                 ),
                                 self.event_loop,
                             )
+                            # Stop typing indicator - compaction doesn't produce a
+                            # normal prompt response so on_turn_end won't fire
+                            agent_data.get("typing_stop_event", threading.Event()).set()
                         elif status_type == "failed":
                             error = status.get("error", "Unknown error")
                             asyncio.run_coroutine_threadsafe(
@@ -382,6 +409,7 @@ class KiroSessionACP:
                                 ),
                                 self.event_loop,
                             )
+                            agent_data.get("typing_stop_event", threading.Event()).set()
 
             session.on_compaction_status(on_compaction_status)
 
