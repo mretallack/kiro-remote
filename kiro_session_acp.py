@@ -132,8 +132,8 @@ class KiroSessionACP:
         agent_data["chunks"] = []  # Reset chunks for new message
 
         # Handle /compact specially - it goes through send_prompt but kiro-cli
-        # doesn't return a prompt response for it, so it blocks for 600s.
-        # Run it in a background thread so the worker queue isn't blocked.
+        # doesn't return a prompt response for it, leaving the session locked.
+        # Send the prompt with a short timeout and cancel to free the session.
         if text.strip().lower() == "/compact":
             agent_data["typing_stop_event"].clear()
             agent_data["typing_thread"] = threading.Thread(
@@ -143,16 +143,32 @@ class KiroSessionACP:
             )
             agent_data["typing_thread"].start()
 
-            def _compact_bg():
-                try:
-                    session.send_message(text)
-                except Exception:
-                    pass
-                # Ensure typing stops even if callback didn't fire
-                agent_data["typing_stop_event"].set()
+            client = agent_data["client"]
+            session_id = agent_data["session_id"]
+            content = [{"type": "text", "text": text}]
+            params = {"sessionId": session_id, "prompt": content}
 
-            threading.Thread(target=_compact_bg, daemon=True).start()
-            logger.info("Worker: Sent /compact in background thread")
+            # Send the prompt request
+            request_id = client.next_id
+            client.next_id += 1
+            request = {"jsonrpc": "2.0", "id": request_id, "method": "session/prompt", "params": params}
+            response_queue = __import__("queue").Queue()
+            client.pending_requests[request_id] = response_queue
+
+            import json as _json
+            client.process.stdin.write(_json.dumps(request) + "\n")
+            client.process.stdin.flush()
+
+            # Wait briefly then cancel - compaction callback handles the rest
+            try:
+                response_queue.get(timeout=5)
+            except Exception:
+                pass
+            client.pending_requests.pop(request_id, None)
+            client.cancel(session_id)
+
+            logger.info("Worker: Sent /compact and released session")
+            # Typing will be stopped by on_compaction_status callback
             return
 
         # Start typing indicator thread
