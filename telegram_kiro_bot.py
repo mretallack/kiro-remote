@@ -417,6 +417,9 @@ class TelegramBot:
             "agent_name": agent_name,
         }
 
+        # Suppress background agent output during interactive flow
+        self.kiro.suppress_output = True
+
         await update.message.reply_text(
             f"Creating agent '{agent_name}'...\n\nWhat's the agent description?"
         )
@@ -450,11 +453,13 @@ class TelegramBot:
             print(f"[DEBUG] Active agent: {self.kiro.active_agent}")
 
             # Format response (simplified, no markdown)
+            pending_agents = set(self.kiro.agents_with_pending_output())
             response = "Available agents:\n\n"
             response += "Built-in agents:\n"
             for agent in builtin_agents:
                 current_marker = " <- active" if agent == self.kiro.active_agent else ""
-                response += f"• {agent}{current_marker}\n"
+                pending_marker = " *" if agent in pending_agents else ""
+                response += f"• {agent}{current_marker}{pending_marker}\n"
 
             if custom_agents:
                 response += "\nCustom agents:\n"
@@ -462,7 +467,11 @@ class TelegramBot:
                     current_marker = (
                         " <- active" if agent == self.kiro.active_agent else ""
                     )
-                    response += f"• {agent}{current_marker}\n"
+                    pending_marker = " *" if agent in pending_agents else ""
+                    response += f"• {agent}{current_marker}{pending_marker}\n"
+
+            if pending_agents:
+                response += "\n* = has pending output"
 
             print(f"[DEBUG] Final response length: {len(response)}")
             print(f"[DEBUG] Final response: '{response}'")
@@ -777,8 +786,12 @@ Help
             except Exception as e:
                 await update.message.reply_text(f"❌ Error creating agent: {e}")
 
-            # Clear conversation state
+            # Clear conversation state and resume output
             del self.user_states[chat_id]
+            self.kiro.suppress_output = False
+            # Flush any output that was queued during the creation flow
+            if self.kiro.active_agent:
+                self.kiro.flush_pending_output(self.kiro.active_agent)
 
     def validate_agent_name(self, name):
         """Validate agent name format"""
@@ -845,6 +858,9 @@ Help
             "step": "description",
             "agent_name": agent_name,
         }
+
+        # Suppress background agent output during interactive flow
+        self.kiro.suppress_output = True
 
         await update.message.reply_text(
             f"Creating agent '{agent_name}'...\n\nWhat's the agent description?"

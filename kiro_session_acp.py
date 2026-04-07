@@ -50,6 +50,9 @@ class KiroSessionACP:
         # Context tracking
         self.context_tracker = ContextTracker()
 
+        # Output suppression: when True, output is queued instead of sent
+        self.suppress_output = False
+
     def get_available_models(self):
         """Get list of available models for active agent."""
         if not self.active_agent or self.active_agent not in self.agents:
@@ -126,7 +129,8 @@ class KiroSessionACP:
             self._send_error(chat_id, "No active agent")
             return
 
-        agent_data = self.agents[self.active_agent]
+        current_agent_name = self.active_agent
+        agent_data = self.agents[current_agent_name]
         session = agent_data["session"]
         agent_data["chat_id"] = chat_id
         agent_data["chunks"] = []  # Reset chunks for new message
@@ -151,11 +155,17 @@ class KiroSessionACP:
             # Send the prompt request
             request_id = client.next_id
             client.next_id += 1
-            request = {"jsonrpc": "2.0", "id": request_id, "method": "session/prompt", "params": params}
+            request = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "session/prompt",
+                "params": params,
+            }
             response_queue = __import__("queue").Queue()
             client.pending_requests[request_id] = response_queue
 
             import json as _json
+
             client.process.stdin.write(_json.dumps(request) + "\n")
             client.process.stdin.flush()
 
@@ -245,7 +255,9 @@ class KiroSessionACP:
 
                 if output_parts:
                     message = "\n".join(output_parts)
-                    self._send_to_telegram_sync(agent_data["chat_id"], message)
+                    self._send_to_telegram_sync(
+                        agent_data["chat_id"], message, agent_name=current_agent_name
+                    )
 
             # Handle file read output (Text format)
             elif "Text" in first_item:
@@ -260,7 +272,9 @@ class KiroSessionACP:
                     text_content = f"{text_content[:max_chars]}\n\n... (truncated {len(text_content) - max_chars} chars) ..."
 
                 message = f"**File Content:**\n```\n{text_content}\n```"
-                self._send_to_telegram_sync(agent_data["chat_id"], message)
+                self._send_to_telegram_sync(
+                    agent_data["chat_id"], message, agent_name=current_agent_name
+                )
 
         def on_turn_end():
             logger.info(f"Worker: on_turn_end called")
@@ -308,7 +322,7 @@ class KiroSessionACP:
                 agent_data["typing_thread"].join(timeout=1.0)
                 agent_data["typing_thread"] = None
 
-            self._send_error(chat_id, str(e))
+            self._send_error(chat_id, str(e), agent_name=current_agent_name)
 
     def _handle_start_session(self, msg: Dict[str, Any]):
         """Handle start_session request in worker thread."""
@@ -343,42 +357,22 @@ class KiroSessionACP:
                     # Check for warnings
                     if self.context_tracker.should_alert(session_id):
                         logger.info(f"Worker: Context usage alert at {context_usage}%")
-                        # Send alert to user
-                        if (
-                            current_chat_id
-                            and hasattr(self, "send_to_telegram")
-                            and self.send_to_telegram
-                        ):
-                            import asyncio
-
-                            if hasattr(self, "event_loop") and self.event_loop:
-                                asyncio.run_coroutine_threadsafe(
-                                    self.send_to_telegram(
-                                        current_chat_id,
-                                        f"🚨 Context usage: {context_usage:.1f}%. Recommend using \\compact now",
-                                    ),
-                                    self.event_loop,
-                                )
+                        if current_chat_id:
+                            self._send_to_telegram_sync(
+                                current_chat_id,
+                                f"🚨 Context usage: {context_usage:.1f}%. Recommend using \\compact now",
+                                agent_name=agent_name,
+                            )
                     elif self.context_tracker.should_warn(session_id):
                         logger.info(
                             f"Worker: Context usage warning at {context_usage}%"
                         )
-                        # Send warning to user
-                        if (
-                            current_chat_id
-                            and hasattr(self, "send_to_telegram")
-                            and self.send_to_telegram
-                        ):
-                            import asyncio
-
-                            if hasattr(self, "event_loop") and self.event_loop:
-                                asyncio.run_coroutine_threadsafe(
-                                    self.send_to_telegram(
-                                        current_chat_id,
-                                        f"⚠️ Context usage: {context_usage:.1f}%. Consider using \\compact",
-                                    ),
-                                    self.event_loop,
-                                )
+                        if current_chat_id:
+                            self._send_to_telegram_sync(
+                                current_chat_id,
+                                f"⚠️ Context usage: {context_usage:.1f}%. Consider using \\compact",
+                                agent_name=agent_name,
+                            )
 
             session.on_metadata(on_metadata)
 
@@ -392,40 +386,30 @@ class KiroSessionACP:
                 agent_data = self.agents.get(agent_name, {})
                 current_chat_id = agent_data.get("chat_id")
 
-                if (
-                    current_chat_id
-                    and hasattr(self, "send_to_telegram")
-                    and self.send_to_telegram
-                ):
-                    import asyncio
-
-                    if hasattr(self, "event_loop") and self.event_loop:
-                        if status_type == "started":
-                            asyncio.run_coroutine_threadsafe(
-                                self.send_to_telegram(
-                                    current_chat_id, "🔄 Compacting conversation..."
-                                ),
-                                self.event_loop,
-                            )
-                        elif status_type == "completed":
-                            asyncio.run_coroutine_threadsafe(
-                                self.send_to_telegram(
-                                    current_chat_id, "✅ Compaction complete"
-                                ),
-                                self.event_loop,
-                            )
-                            # Stop typing indicator - compaction doesn't produce a
-                            # normal prompt response so on_turn_end won't fire
-                            agent_data.get("typing_stop_event", threading.Event()).set()
-                        elif status_type == "failed":
-                            error = status.get("error", "Unknown error")
-                            asyncio.run_coroutine_threadsafe(
-                                self.send_to_telegram(
-                                    current_chat_id, f"❌ Compaction failed: {error}"
-                                ),
-                                self.event_loop,
-                            )
-                            agent_data.get("typing_stop_event", threading.Event()).set()
+                if current_chat_id:
+                    if status_type == "started":
+                        self._send_to_telegram_sync(
+                            current_chat_id,
+                            "🔄 Compacting conversation...",
+                            agent_name=agent_name,
+                        )
+                    elif status_type == "completed":
+                        self._send_to_telegram_sync(
+                            current_chat_id,
+                            "✅ Compaction complete",
+                            agent_name=agent_name,
+                        )
+                        # Stop typing indicator - compaction doesn't produce a
+                        # normal prompt response so on_turn_end won't fire
+                        agent_data.get("typing_stop_event", threading.Event()).set()
+                    elif status_type == "failed":
+                        error = status.get("error", "Unknown error")
+                        self._send_to_telegram_sync(
+                            current_chat_id,
+                            f"❌ Compaction failed: {error}",
+                            agent_name=agent_name,
+                        )
+                        agent_data.get("typing_stop_event", threading.Event()).set()
 
             session.on_compaction_status(on_compaction_status)
 
@@ -435,6 +419,7 @@ class KiroSessionACP:
                 "session": session,
                 "session_id": session_id,
                 "working_dir": working_dir,
+                "agent_name": agent_name,
                 "chunks": [],  # Store chunks per agent
                 "chat_id": None,  # Store chat_id per agent
                 "models": session_result.get("models", {}),  # Store models info
@@ -443,6 +428,7 @@ class KiroSessionACP:
                 "chunk_lock": threading.Lock(),  # Thread safety for chunks
                 "typing_thread": None,  # Thread for typing indicator
                 "typing_stop_event": threading.Event(),  # Signal to stop typing
+                "pending_output": [],  # Queued output when agent is not active
             }
 
             self.active_agent = agent_name
@@ -521,7 +507,11 @@ class KiroSessionACP:
                     f"Worker: Flushing {len(chunks)} chunks ({len(message)} chars)"
                 )
                 try:
-                    self._send_to_telegram_sync(agent_data["chat_id"], message)
+                    self._send_to_telegram_sync(
+                        agent_data["chat_id"],
+                        message,
+                        agent_name=agent_data.get("agent_name"),
+                    )
                 except Exception as e:
                     logger.error(f"Error flushing chunks: {e}")
                 chunks.clear()
@@ -549,8 +539,22 @@ class KiroSessionACP:
 
         logger.info(f"Worker: Typing indicator thread stopped for chat {chat_id}")
 
-    def _send_to_telegram_sync(self, chat_id: int, text: str):
-        """Send message to Telegram from worker thread."""
+    def _send_to_telegram_sync(self, chat_id: int, text: str, agent_name: str = None):
+        """Send message to Telegram from worker thread.
+
+        If agent_name is provided, output is queued when that agent is not
+        active or when output is globally suppressed.
+        """
+        # Gate: queue output if agent is not active or output is suppressed
+        if agent_name and (agent_name != self.active_agent or self.suppress_output):
+            agent_data = self.agents.get(agent_name)
+            if agent_data is not None:
+                agent_data["pending_output"].append((chat_id, text))
+                logger.info(
+                    f"Worker: Queued output for inactive/suppressed agent {agent_name} ({len(text)} chars)"
+                )
+            return
+
         logger.info(
             f"Worker: _send_to_telegram_sync called with text length: {len(text)}"
         )
@@ -621,7 +625,7 @@ class KiroSessionACP:
 
         return text
 
-    def _send_error(self, chat_id: int, error: str):
+    def _send_error(self, chat_id: int, error: str, agent_name: str = None):
         """Send error message to Telegram."""
         # Try to extract meaningful error from JSON-RPC error
         if "monthly usage limit has been reached" in error:
@@ -638,7 +642,7 @@ class KiroSessionACP:
         else:
             user_message = f"❌ Error: {error}"
 
-        self._send_to_telegram_sync(chat_id, user_message)
+        self._send_to_telegram_sync(chat_id, user_message, agent_name=agent_name)
 
     # Public API (called from async layer)
 
@@ -750,6 +754,9 @@ class KiroSessionACP:
             # Switch active agent
             self.active_agent = agent_name
 
+            # Flush any pending output from this agent
+            self.flush_pending_output(agent_name)
+
             # Try to set the mode to match the agent name
             # This will silently fail if the mode doesn't exist
             self.set_mode(agent_name)
@@ -760,3 +767,22 @@ class KiroSessionACP:
         except Exception as e:
             logger.error(f"Failed to switch agent: {e}")
             return False
+
+    def flush_pending_output(self, agent_name: str):
+        """Send all queued output for an agent to Telegram."""
+        agent_data = self.agents.get(agent_name)
+        if not agent_data:
+            return
+        pending = agent_data["pending_output"]
+        if not pending:
+            return
+        logger.info(f"Flushing {len(pending)} pending messages for agent {agent_name}")
+        for chat_id, text in pending:
+            self._send_to_telegram_sync(chat_id, text)
+        pending.clear()
+
+    def agents_with_pending_output(self) -> list:
+        """Return list of agent names that have queued output."""
+        return [
+            name for name, data in self.agents.items() if data.get("pending_output")
+        ]
