@@ -1,8 +1,9 @@
 """Tests for KiroSessionACP callback logic (compaction status, context alerts)."""
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
 from context_tracker import ContextTracker
 
@@ -76,7 +77,9 @@ class TestCompactionCallback:
 
         with patch("asyncio.run_coroutine_threadsafe"):
             cb({"status": {"type": "completed"}})
-            kiro.send_to_telegram.assert_called_once_with(12345, "✅ Compaction complete")
+            kiro.send_to_telegram.assert_called_once_with(
+                12345, "✅ Compaction complete"
+            )
 
     def test_compaction_failed_sends_error(self):
         kiro = self._make_kiro_mock()

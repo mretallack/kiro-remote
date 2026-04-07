@@ -1,8 +1,9 @@
 """Tests for Telegram bot command interception and routing."""
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
 import pytest
-from unittest.mock import AsyncMock, Mock, MagicMock, patch
 
 # We need to test handle_intercepted_commands and show_help
 # without starting the full bot. We'll import TelegramBot and mock its dependencies.
