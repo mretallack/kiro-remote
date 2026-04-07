@@ -303,6 +303,7 @@ sudo journalctl -u telegram-kiro-bot -f
 - **Prompt timeout investigation**: Review how chunk_timeout works — does it reset on each chunk received, or is it measured from send to end? Document and potentially make configurable
 - **Typing indicator on agent swap**: Verify typing status is correctly updated when switching between agents — may not clear/set properly
 - **Agent monitoring mode**: `\agent` with no subcommand enters monitoring mode — watches all running agents and notifies the user when any agent finishes (e.g., "✅ facebook_dev is finished and awaiting next instruction")
+- **Agent list copy-to-clipboard**: Format agent names in `\agent list` so they are tappable/copyable in Telegram (e.g., using inline code formatting or copy buttons)
 
 ### User Experience
 - **Configurable chunk timeout**: Per-user or per-agent timeout settings
