@@ -289,6 +289,32 @@ sudo journalctl -u telegram-kiro-bot -f
 - **Progress indicators**: Show progress for multi-step operations
 
 ### Error Handling
+
+- **Message too long splitting**
+  - Problem: Kiro sometimes returns responses that exceed Telegram's 4096 character message limit, causing the message to fail to send entirely.
+  - Found: `telegram.error.BadRequest: Message is too long` in journal logs (Apr 12 18:20).
+  - Solution: Detect message length before sending and split into multiple sequential messages, preserving markdown formatting across chunks.
+
+- **Prompt timeout handling**
+  - Problem: Long-running Kiro tasks (e.g. complex code generation, docker builds) exceed the prompt timeout, causing the request to fail and the user to get no response.
+  - Found: `Exception: Timeout waiting for response to session/prompt` — ~20 occurrences across Apr 11–12, the most frequent error in the logs.
+  - Solution: Make the prompt timeout configurable in `settings.ini`. Consider increasing the default, and send the user a notification when a timeout occurs rather than silently failing.
+
+- **Prompt already in progress guard**
+  - Problem: When a prompt times out, the user retries, but the original prompt is still running server-side. The retry hits `Prompt already in progress` and also fails.
+  - Found: `Exception: JSON-RPC error: {'code': -32603, 'message': 'Internal error', 'data': 'Prompt already in progress'}` — ~10 occurrences, always following a timeout.
+  - Solution: Track prompt state and prevent sending a new prompt while one is in-flight. Queue incoming messages and notify the user that a previous request is still processing. Optionally cancel the in-flight prompt before retrying.
+
+- **Monthly usage limit handling**
+  - Problem: When the Kiro monthly usage limit is reached, every prompt fails with an unhandled exception. The bot keeps trying and failing on each user message.
+  - Found: `Exception: JSON-RPC error: ... 'The monthly usage limit has been reached'` — 4 occurrences in quick succession (Apr 12 17:44–17:49) before the service was restarted.
+  - Solution: Detect this specific error, notify the user with a friendly message ("Monthly usage limit reached — try again next month or check your plan"), and suppress further prompt attempts until the session is restarted or a configurable cooldown expires.
+
+- **Transient network error recovery**
+  - Problem: Occasional Telegram API connectivity issues cause unhandled exceptions that get logged but aren't recovered from gracefully.
+  - Found: `telegram.error.NetworkError: httpx.ReadError:` (5 occurrences) and `telegram.error.NetworkError: Bad Gateway` (1 occurrence, Apr 12 02:10) in journal logs.
+  - Solution: Add retry logic with exponential backoff for Telegram API calls. The python-telegram-bot library may already handle some retries — verify and configure appropriately. Register an error handler via `application.add_error_handler()` to catch and log these instead of letting them propagate unhandled.
+
 - **Enhanced error messages**: Include more context and suggestions for common errors
 - **Error recovery suggestions**: Provide actionable steps when operations fail
 - **Retry mechanism**: Automatic retry for transient failures
