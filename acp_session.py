@@ -51,8 +51,12 @@ class ACPSession:
             f"ACPSession: Received notification method={method}, sessionId={params.get('sessionId')}, my_session={self.session_id}, request_id={request_id}"
         )
 
-        # Only process notifications for this session
-        if params.get("sessionId") != self.session_id:
+        # Only process notifications for this session (except global notifications)
+        global_methods = {
+            "_kiro.dev/subagent/list_update",
+            "_kiro.dev/session/inbox_notification",
+        }
+        if method not in global_methods and params.get("sessionId") != self.session_id:
             logger.debug(f"ACPSession: Ignoring notification for different session")
             return
 
