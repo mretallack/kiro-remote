@@ -57,6 +57,19 @@ class ACPSession:
             "_kiro.dev/session/inbox_notification",
         }
         if method not in global_methods and params.get("sessionId") != self.session_id:
+            # Allow tool_call updates through for known subagent sessions
+            if method == "session/update":
+                update = params.get("update", {})
+                update_type = update.get("sessionUpdate")
+                if update_type == "tool_call":
+                    for callback in self.subagent_callbacks:
+                        callback(
+                            {
+                                "_tool_call_update": True,
+                                "sessionId": params.get("sessionId"),
+                                "title": update.get("title", ""),
+                            }
+                        )
             logger.debug(f"ACPSession: Ignoring notification for different session")
             return
 

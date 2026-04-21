@@ -450,6 +450,15 @@ class KiroSessionACP:
 
             # Register subagent update callback
             def on_subagent_update(params):
+                # Handle tool_call title updates for subagents
+                if params.get("_tool_call_update"):
+                    agent_data = self.agents.get(agent_name, {})
+                    sid = params.get("sessionId", "")
+                    title = params.get("title", "")
+                    if sid in agent_data.get("subagents", {}) and title:
+                        agent_data["subagents"][sid]["last_tool"] = title[:80]
+                    return
+
                 subagents_list = params.get("subagents", [])
                 agent_data = self.agents.get(agent_name, {})
                 current_chat_id = agent_data.get("chat_id")

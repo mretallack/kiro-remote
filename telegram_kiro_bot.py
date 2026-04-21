@@ -529,7 +529,9 @@ class TelegramBot:
         response = f"<b>Active subagents</b> ({len(subagents)}):\n\n"
         for sid, info in subagents.items():
             response += f"🔀 <code>{info['name']}</code>\n"
-            if info.get("query"):
+            if info.get("last_tool"):
+                response += f"   🔧 {info['last_tool']}\n"
+            elif info.get("query"):
                 response += f"   {info['query']}\n"
         await update.message.reply_text(response, parse_mode="HTML")
 
