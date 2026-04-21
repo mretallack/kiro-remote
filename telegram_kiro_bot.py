@@ -292,6 +292,12 @@ class TelegramBot:
             await update.message.reply_text("🛑 Cancelling operation...")
             return True
 
+        # Subagents command
+        if normalized_text == "/subagents":
+            print(f"[DEBUG] Intercepted subagents command")
+            await self.show_subagents(update, context)
+            return True
+
         # Model commands
         if normalized_text.startswith("/model"):
             print(f"[DEBUG] Intercepted model command")
@@ -502,6 +508,23 @@ class TelegramBot:
             print(f"[DEBUG] Traceback: {traceback.format_exc()}")
             await update.message.reply_text(f"Error: {e}")
 
+    async def show_subagents(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show active subagents for the current agent."""
+        if update.effective_user.username != self.authorized_user:
+            return
+
+        subagents = self.kiro.get_subagents()
+        if not subagents:
+            await update.message.reply_text("No active subagents")
+            return
+
+        response = f"<b>Active subagents</b> ({len(subagents)}):\n\n"
+        for sid, info in subagents.items():
+            response += f"🔀 <code>{info['name']}</code>\n"
+            if info.get("query"):
+                response += f"   {info['query']}\n"
+        await update.message.reply_text(response, parse_mode="HTML")
+
     async def show_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show all available bot commands"""
         help_text = """📚 Telegram Kiro Bot Commands
@@ -529,6 +552,7 @@ Model Management
 
 Operation Control
 \\cancel - Cancel current operation
+\\subagents - Show active subagents
 
 Help
 \\help - Show this help message

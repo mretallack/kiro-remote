@@ -448,6 +448,49 @@ class KiroSessionACP:
 
             session.on_compaction_status(on_compaction_status)
 
+            # Register subagent update callback
+            def on_subagent_update(params):
+                subagents_list = params.get("subagents", [])
+                agent_data = self.agents.get(agent_name, {})
+                current_chat_id = agent_data.get("chat_id")
+                prev = agent_data.get("subagents", {})
+
+                # Build new state
+                current = {}
+                for sa in subagents_list:
+                    sid = sa.get("sessionId", "")
+                    current[sid] = {
+                        "name": sa.get("sessionName", "unknown"),
+                        "agent": sa.get("agentName", ""),
+                        "query": sa.get("initialQuery", "")[:100],
+                        "status": sa.get("status", "running"),
+                    }
+
+                # Detect new subagents
+                for sid, info in current.items():
+                    if sid not in prev:
+                        query_preview = info["query"][:60]
+                        if current_chat_id:
+                            self._send_to_telegram_sync(
+                                current_chat_id,
+                                f"🔀 Subagent <code>{info['name']}</code> started: {query_preview}...",
+                                agent_name=agent_name,
+                            )
+
+                # Detect finished subagents
+                for sid, info in prev.items():
+                    if sid not in current:
+                        if current_chat_id:
+                            self._send_to_telegram_sync(
+                                current_chat_id,
+                                f"✅ Subagent <code>{info['name']}</code> finished",
+                                agent_name=agent_name,
+                            )
+
+                agent_data["subagents"] = current
+
+            session.on_subagent_update(on_subagent_update)
+
             # Store for this agent
             self.agents[agent_name] = {
                 "client": client,
@@ -466,6 +509,7 @@ class KiroSessionACP:
                 "pending_output": [],  # Queued output when agent is not active
                 "prompt_in_flight": False,  # Guard against concurrent prompts
                 "usage_limit_reached": False,  # Monthly usage limit flag
+                "subagents": {},  # Active subagents {sessionId: info}
             }
 
             self.active_agent = agent_name
@@ -849,6 +893,12 @@ class KiroSessionACP:
                 logger.error(f"Error sending direct cancel: {e}")
         # Also queue so worker cleans up when it unblocks
         self.message_queue.put({"type": "cancel"})
+
+    def get_subagents(self) -> dict:
+        """Get active subagents for the current agent."""
+        if self.active_agent and self.active_agent in self.agents:
+            return self.agents[self.active_agent].get("subagents", {})
+        return {}
 
     def close(self):
         """Close all sessions and stop worker."""

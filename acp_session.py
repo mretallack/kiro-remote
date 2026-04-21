@@ -36,6 +36,7 @@ class ACPSession:
         self.compaction_status_callbacks = []
         self.mcp_event_callbacks = []
         self.metadata_callbacks = []
+        self.subagent_callbacks = []
 
         # Register notification handler
         self.client.on_notification(self._handle_notification)
@@ -108,6 +109,12 @@ class ACPSession:
             logger.debug(f"ACPSession: Metadata: {params}")
             for callback in self.metadata_callbacks:
                 callback(params)
+        elif method == "_kiro.dev/subagent/list_update":
+            logger.debug(f"ACPSession: Subagent list update")
+            for callback in self.subagent_callbacks:
+                callback(params)
+        elif method == "_kiro.dev/session/inbox_notification":
+            logger.debug(f"ACPSession: Inbox notification: {params}")
         elif method.startswith("_kiro.dev/"):
             # Unknown Kiro extension notification
             logger.info(f"ACPSession: Unknown Kiro notification: {method}")
@@ -240,6 +247,10 @@ class ACPSession:
     def on_metadata(self, callback: Callable[[Dict[str, Any]], None]) -> None:
         """Register callback for metadata notifications."""
         self.metadata_callbacks.append(callback)
+
+    def on_subagent_update(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        """Register callback for subagent list updates."""
+        self.subagent_callbacks.append(callback)
 
     def cancel(self) -> None:
         """Cancel the current operation."""
