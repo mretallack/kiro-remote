@@ -298,7 +298,7 @@ class TelegramBot:
             await self.show_subagents(update, context)
             return True
         if normalized_text.startswith("/subagents kill "):
-            name = normalized_text[len("/subagents kill "):].strip()
+            name = normalized_text[len("/subagents kill ") :].strip()
             if name:
                 result = self.kiro.terminate_subagent(name)
                 await update.message.reply_text(result)
@@ -496,7 +496,9 @@ class TelegramBot:
                         " ← active" if agent == self.kiro.active_agent else ""
                     )
                     pending_marker = " *" if agent in pending_agents else ""
-                    response += f"• <code>{agent}</code>{current_marker}{pending_marker}\n"
+                    response += (
+                        f"• <code>{agent}</code>{current_marker}{pending_marker}\n"
+                    )
 
             if pending_agents:
                 response += "\n* = has pending output"
