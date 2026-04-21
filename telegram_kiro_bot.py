@@ -49,6 +49,7 @@ class TelegramBot:
         attachments_dir=None,
         chunk_timeout=2.0,
         typing_refresh_interval=4.0,
+        prompt_timeout=600,
     ):
         self.token = token
         self.authorized_user = authorized_user
@@ -61,6 +62,7 @@ class TelegramBot:
         # Configure timeouts
         self.kiro.chunk_timeout = chunk_timeout
         self.kiro.typing_refresh_interval = typing_refresh_interval
+        self.kiro.prompt_timeout = prompt_timeout
 
         # Build application
         self.application = Application.builder().token(token).build()
@@ -94,6 +96,20 @@ class TelegramBot:
         self.application.add_handler(
             MessageHandler(filters.Document.ALL, self.handle_document)
         )
+
+        # Global error handler for transient network errors (Fix 5)
+        self.application.add_error_handler(self._error_handler)
+
+    @staticmethod
+    async def _error_handler(update, context):
+        """Handle errors from python-telegram-bot, suppressing transient network issues."""
+        import telegram.error
+
+        error = context.error
+        if isinstance(error, telegram.error.NetworkError):
+            logger.warning(f"Transient network error (suppressed): {error}")
+        else:
+            logger.error(f"Unhandled error: {error}", exc_info=context.error)
 
     def _setup_attachments_dir(self):
         """Create attachments directory if it doesn't exist"""
@@ -452,23 +468,23 @@ class TelegramBot:
             print(f"[DEBUG] Custom agents: {custom_agents}")
             print(f"[DEBUG] Active agent: {self.kiro.active_agent}")
 
-            # Format response (simplified, no markdown)
+            # Format response with HTML for tappable agent names
             pending_agents = set(self.kiro.agents_with_pending_output())
-            response = "Available agents:\n\n"
-            response += "Built-in agents:\n"
+            response = "<b>Available agents:</b>\n\n"
+            response += "<b>Built-in agents:</b>\n"
             for agent in builtin_agents:
-                current_marker = " <- active" if agent == self.kiro.active_agent else ""
+                current_marker = " ← active" if agent == self.kiro.active_agent else ""
                 pending_marker = " *" if agent in pending_agents else ""
-                response += f"• {agent}{current_marker}{pending_marker}\n"
+                response += f"• <code>{agent}</code>{current_marker}{pending_marker}\n"
 
             if custom_agents:
-                response += "\nCustom agents:\n"
+                response += "\n<b>Custom agents:</b>\n"
                 for agent in sorted(custom_agents):
                     current_marker = (
-                        " <- active" if agent == self.kiro.active_agent else ""
+                        " ← active" if agent == self.kiro.active_agent else ""
                     )
                     pending_marker = " *" if agent in pending_agents else ""
-                    response += f"• {agent}{current_marker}{pending_marker}\n"
+                    response += f"• <code>{agent}</code>{current_marker}{pending_marker}\n"
 
             if pending_agents:
                 response += "\n* = has pending output"
@@ -476,7 +492,7 @@ class TelegramBot:
             print(f"[DEBUG] Final response length: {len(response)}")
             print(f"[DEBUG] Final response: '{response}'")
             print(f"[DEBUG] About to send reply_text")
-            await update.message.reply_text(response)
+            await update.message.reply_text(response, parse_mode="HTML")
             print(f"[DEBUG] Reply sent successfully")
         except Exception as e:
             print(f"[DEBUG] Error in list_agents: {e}")
@@ -1046,8 +1062,14 @@ if __name__ == "__main__":
     TYPING_REFRESH_INTERVAL = config.getfloat(
         "bot", "typing_refresh_interval", fallback=4.0
     )
+    PROMPT_TIMEOUT = config.getint("bot", "prompt_timeout", fallback=600)
 
     bot = TelegramBot(
-        TOKEN, AUTHORIZED_USER, ATTACHMENTS_DIR, CHUNK_TIMEOUT, TYPING_REFRESH_INTERVAL
+        TOKEN,
+        AUTHORIZED_USER,
+        ATTACHMENTS_DIR,
+        CHUNK_TIMEOUT,
+        TYPING_REFRESH_INTERVAL,
+        PROMPT_TIMEOUT,
     )
     bot.run()

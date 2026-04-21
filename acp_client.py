@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class ACPClient:
     """Manages JSON-RPC communication with kiro-cli acp subprocess."""
 
-    def __init__(self, working_directory: str):
+    def __init__(self, working_directory: str, prompt_timeout: int = 600):
         self.working_directory = working_directory
         self.process: Optional[subprocess.Popen] = None
         self.next_id = 1
@@ -33,6 +33,7 @@ class ACPClient:
         self.notification_handlers: List[Callable] = []
         self.running = False
         self.reader_thread: Optional[threading.Thread] = None
+        self.prompt_timeout = prompt_timeout
 
     def start(self) -> None:
         """Start kiro-cli acp subprocess and reader thread."""
@@ -173,8 +174,8 @@ class ACPClient:
             self.process.stdin.flush()
 
             response = response_queue.get(
-                timeout=600
-            )  # Increased timeout for long-running prompts
+                timeout=self.prompt_timeout
+            )  # Configurable timeout for long-running prompts
 
             if "error" in response:
                 raise Exception(f"JSON-RPC error: {response['error']}")

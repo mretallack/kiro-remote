@@ -42,6 +42,7 @@ class KiroSessionACP:
         # Configuration
         self.chunk_timeout = 2.0
         self.typing_refresh_interval = 4.0
+        self.prompt_timeout = 600
 
         # Worker thread
         self.worker_thread = None
@@ -134,6 +135,24 @@ class KiroSessionACP:
         session = agent_data["session"]
         agent_data["chat_id"] = chat_id
         agent_data["chunks"] = []  # Reset chunks for new message
+
+        # Fix 4: Check usage limit
+        if agent_data.get("usage_limit_reached"):
+            self._send_to_telegram_sync(
+                chat_id,
+                "❌ Monthly usage limit reached. Try again next month or check your plan. Use \\cancel to reset.",
+                agent_name=current_agent_name,
+            )
+            return
+
+        # Fix 3: Check prompt in flight
+        if agent_data.get("prompt_in_flight"):
+            self._send_to_telegram_sync(
+                chat_id,
+                "⏳ Previous request still processing. Use \\cancel to abort it.",
+                agent_name=current_agent_name,
+            )
+            return
 
         # Handle /compact specially - it goes through send_prompt but kiro-cli
         # doesn't return a prompt response for it, leaving the session locked.
@@ -279,6 +298,9 @@ class KiroSessionACP:
         def on_turn_end():
             logger.info(f"Worker: on_turn_end called")
 
+            # Clear prompt-in-flight flag
+            agent_data["prompt_in_flight"] = False
+
             # Cancel chunk timer if active
             if agent_data["chunk_timer"]:
                 agent_data["chunk_timer"].cancel()
@@ -307,6 +329,7 @@ class KiroSessionACP:
         session.on_turn_end(on_turn_end)
 
         # Send message (blocks until response)
+        agent_data["prompt_in_flight"] = True
         try:
             session.send_message(text)
             logger.info("Worker: Message sent successfully")
@@ -316,13 +339,25 @@ class KiroSessionACP:
 
             traceback.print_exc()
 
+            # Clear prompt-in-flight flag on error
+            agent_data["prompt_in_flight"] = False
+
             # Stop typing indicator on error
             agent_data["typing_stop_event"].set()
             if agent_data["typing_thread"]:
                 agent_data["typing_thread"].join(timeout=1.0)
                 agent_data["typing_thread"] = None
 
-            self._send_error(chat_id, str(e), agent_name=current_agent_name)
+            # Fix 2 Task 2.5: User-friendly timeout message
+            error_str = str(e)
+            if "Timeout waiting for response" in error_str:
+                self._send_to_telegram_sync(
+                    chat_id,
+                    f"⏱️ Request timed out after {self.prompt_timeout}s. The operation may still be running — use \\cancel to abort.",
+                    agent_name=current_agent_name,
+                )
+            else:
+                self._send_error(chat_id, error_str, agent_name=current_agent_name)
 
     def _handle_start_session(self, msg: Dict[str, Any]):
         """Handle start_session request in worker thread."""
@@ -332,7 +367,7 @@ class KiroSessionACP:
         logger.info(f"Worker: Starting session for {agent_name}")
 
         try:
-            client = ACPClient(working_dir)
+            client = ACPClient(working_dir, prompt_timeout=self.prompt_timeout)
             client.start()
             client.initialize()
 
@@ -429,6 +464,8 @@ class KiroSessionACP:
                 "typing_thread": None,  # Thread for typing indicator
                 "typing_stop_event": threading.Event(),  # Signal to stop typing
                 "pending_output": [],  # Queued output when agent is not active
+                "prompt_in_flight": False,  # Guard against concurrent prompts
+                "usage_limit_reached": False,  # Monthly usage limit flag
             }
 
             self.active_agent = agent_name
@@ -493,8 +530,11 @@ class KiroSessionACP:
     def _handle_cancel(self, msg: Dict[str, Any]):
         """Handle cancel request in worker thread."""
         if self.active_agent and self.active_agent in self.agents:
-            session = self.agents[self.active_agent]["session"]
+            agent_data = self.agents[self.active_agent]
+            session = agent_data["session"]
             session.cancel()
+            agent_data["prompt_in_flight"] = False
+            agent_data["usage_limit_reached"] = False
             logger.info("Worker: Cancelled operation")
 
     def _flush_chunks(self, agent_data: Dict[str, Any]):
@@ -539,6 +579,74 @@ class KiroSessionACP:
 
         logger.info(f"Worker: Typing indicator thread stopped for chat {chat_id}")
 
+    def _split_html_message(self, text: str, max_length: int = 4096) -> list:
+        """Split a message into chunks that fit within Telegram's limit.
+
+        Splits at paragraph breaks, then newlines, then hard limit.
+        Tracks and repairs open HTML tags across splits.
+        """
+        if len(text) <= max_length:
+            return [text]
+
+        # Tags we need to track
+        tag_names = ["pre", "code", "b", "i"]
+        tag_pattern = re.compile(
+            r"<(/?)(" + "|".join(tag_names) + r")(?:\s[^>]*)?>", re.IGNORECASE
+        )
+
+        def get_open_tags(chunk: str) -> list:
+            """Return list of tags that are opened but not closed in chunk."""
+            stack = []
+            for match in tag_pattern.finditer(chunk):
+                is_closing = match.group(1) == "/"
+                tag = match.group(2).lower()
+                if is_closing:
+                    if stack and stack[-1] == tag:
+                        stack.pop()
+                else:
+                    stack.append(tag)
+            return stack
+
+        chunks = []
+        remaining = text
+
+        while remaining:
+            if len(remaining) <= max_length:
+                chunks.append(remaining)
+                break
+
+            # Find best split point
+            split_at = None
+            # Try paragraph break
+            idx = remaining.rfind("\n\n", 0, max_length)
+            if idx > 0:
+                split_at = idx + 2
+            else:
+                # Try newline
+                idx = remaining.rfind("\n", 0, max_length)
+                if idx > 0:
+                    split_at = idx + 1
+                else:
+                    # Hard split
+                    split_at = max_length
+
+            chunk = remaining[:split_at]
+            remaining = remaining[split_at:]
+
+            # Repair open tags
+            open_tags = get_open_tags(chunk)
+            if open_tags:
+                # Close open tags at end of chunk (reverse order)
+                for tag in reversed(open_tags):
+                    chunk += f"</{tag}>"
+                # Re-open tags at start of next chunk
+                prefix = "".join(f"<{tag}>" for tag in open_tags)
+                remaining = prefix + remaining
+
+            chunks.append(chunk)
+
+        return chunks
+
     def _send_to_telegram_sync(self, chat_id: int, text: str, agent_name: str = None):
         """Send message to Telegram from worker thread.
 
@@ -560,21 +668,47 @@ class KiroSessionACP:
         )
         if self.send_to_telegram:
             # Convert markdown to HTML
-            text = self._markdown_to_html(text)
-            # Schedule the async call
-            try:
-                logger.debug(f"Worker: Scheduling async call to Telegram")
-                future = asyncio.run_coroutine_threadsafe(
-                    self.send_to_telegram(chat_id, text), self.send_to_telegram.loop
-                )
-                # Wait for the message to actually be sent (with timeout)
-                future.result(timeout=10.0)
-                logger.debug(f"Worker: Message sent to Telegram successfully")
-            except Exception as e:
-                logger.error(f"Error sending telegram message: {e}")
-                import traceback
+            html_text = self._markdown_to_html(text)
+            # Split if too long for Telegram
+            parts = self._split_html_message(html_text)
+            for part in parts:
+                try:
+                    logger.debug(f"Worker: Scheduling async call to Telegram")
+                    future = asyncio.run_coroutine_threadsafe(
+                        self.send_to_telegram(chat_id, part),
+                        self.send_to_telegram.loop,
+                    )
+                    # Wait for the message to actually be sent (with timeout)
+                    future.result(timeout=10.0)
+                    logger.debug(f"Worker: Message sent to Telegram successfully")
+                except (OSError, ConnectionError) as e:
+                    # Retry on transient network errors (Fix 5)
+                    import time
 
-                traceback.print_exc()
+                    for attempt in range(1, 3):
+                        wait = 2**attempt
+                        logger.warning(
+                            f"Network error sending message (attempt {attempt + 1}/3), retrying in {wait}s: {e}"
+                        )
+                        time.sleep(wait)
+                        try:
+                            future = asyncio.run_coroutine_threadsafe(
+                                self.send_to_telegram(chat_id, part),
+                                self.send_to_telegram.loop,
+                            )
+                            future.result(timeout=10.0)
+                            break
+                        except (OSError, ConnectionError) as e2:
+                            e = e2
+                    else:
+                        logger.error(
+                            f"Failed to send telegram message after 3 attempts: {e}"
+                        )
+                except Exception as e:
+                    logger.error(f"Error sending telegram message: {e}")
+                    import traceback
+
+                    traceback.print_exc()
         else:
             logger.warning(f"No send_to_telegram callback set")
 
@@ -628,8 +762,11 @@ class KiroSessionACP:
     def _send_error(self, chat_id: int, error: str, agent_name: str = None):
         """Send error message to Telegram."""
         # Try to extract meaningful error from JSON-RPC error
-        if "monthly usage limit has been reached" in error:
-            user_message = "❌ Error: Monthly usage limit has been reached. Please check your Kiro account."
+        if "monthly usage limit has been reached" in error.lower():
+            user_message = "❌ Monthly usage limit reached. Try again next month or check your plan."
+            # Fix 4: Set usage limit flag
+            if agent_name and agent_name in self.agents:
+                self.agents[agent_name]["usage_limit_reached"] = True
         elif "JSON-RPC error" in error:
             # Extract the actual error message
             import re
@@ -697,7 +834,20 @@ class KiroSessionACP:
         )
 
     def cancel_operation(self):
-        """Cancel current operation (async-safe)."""
+        """Cancel current operation (async-safe).
+
+        Sends cancel directly to kiro-cli, bypassing the worker queue
+        which may be blocked waiting for a prompt response.
+        """
+        if self.active_agent and self.active_agent in self.agents:
+            agent_data = self.agents[self.active_agent]
+            try:
+                agent_data["session"].cancel()
+                agent_data["prompt_in_flight"] = False
+                logger.info("Cancel sent directly to kiro-cli")
+            except Exception as e:
+                logger.error(f"Error sending direct cancel: {e}")
+        # Also queue so worker cleans up when it unblocks
         self.message_queue.put({"type": "cancel"})
 
     def close(self):
@@ -753,6 +903,10 @@ class KiroSessionACP:
 
             # Switch active agent
             self.active_agent = agent_name
+
+            # Clear error flags for the new agent
+            if agent_name in self.agents:
+                self.agents[agent_name]["usage_limit_reached"] = False
 
             # Flush any pending output from this agent
             self.flush_pending_output(agent_name)

@@ -11,3 +11,5 @@ attachments_dir = ~/.kiro/bot_attachments
 chunk_timeout = 2.0
 # Interval in seconds between typing indicator refreshes (default: 4.0)
 typing_refresh_interval = 4.0
+# Timeout in seconds for Kiro prompt responses (default: 600)
+prompt_timeout = 600
