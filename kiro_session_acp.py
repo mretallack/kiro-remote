@@ -900,6 +900,17 @@ class KiroSessionACP:
             return self.agents[self.active_agent].get("subagents", {})
         return {}
 
+    def terminate_subagent(self, name: str) -> str:
+        """Terminate a subagent by name. Returns status message."""
+        subagents = self.get_subagents()
+        for sid, info in subagents.items():
+            if info["name"] == name:
+                if self.active_agent and self.active_agent in self.agents:
+                    client = self.agents[self.active_agent]["client"]
+                    client.terminate_session(sid)
+                    return f"🛑 Terminated subagent `{name}`"
+        return f"❌ No active subagent named `{name}`"
+
     def close(self):
         """Close all sessions and stop worker."""
         self.running = False

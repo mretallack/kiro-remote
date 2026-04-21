@@ -297,6 +297,12 @@ class TelegramBot:
             print(f"[DEBUG] Intercepted subagents command")
             await self.show_subagents(update, context)
             return True
+        if normalized_text.startswith("/subagents kill "):
+            name = normalized_text[len("/subagents kill "):].strip()
+            if name:
+                result = self.kiro.terminate_subagent(name)
+                await update.message.reply_text(result)
+            return True
 
         # Model commands
         if normalized_text.startswith("/model"):
@@ -553,6 +559,7 @@ Model Management
 Operation Control
 \\cancel - Cancel current operation
 \\subagents - Show active subagents
+\\subagents kill <name> - Terminate a subagent
 
 Help
 \\help - Show this help message

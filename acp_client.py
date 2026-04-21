@@ -256,6 +256,12 @@ class ACPClient:
         self._send_notification("session/cancel", params)
         logger.info(f"Sent cancel for session: {session_id}")
 
+    def terminate_session(self, session_id: str) -> None:
+        """Terminate a subagent session."""
+        params = {"sessionId": session_id}
+        self._send_notification("_session/terminate", params)
+        logger.info(f"Sent terminate for session: {session_id}")
+
     def respond_to_permission(
         self, request_id, session_id: str, tool_call_id: str, option_id: str
     ) -> None:
