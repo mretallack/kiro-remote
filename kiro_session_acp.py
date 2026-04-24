@@ -440,7 +440,9 @@ class KiroSessionACP:
                     elif status_type == "failed":
                         error = status.get("error", "Unknown error")
                         if "Not in compacting state" in error:
-                            logger.debug(f"Worker: Ignoring spurious compaction failure: {error}")
+                            logger.debug(
+                                f"Worker: Ignoring spurious compaction failure: {error}"
+                            )
                         else:
                             self._send_to_telegram_sync(
                                 current_chat_id,
@@ -762,6 +764,7 @@ class KiroSessionACP:
                         )
                 except Exception as e:
                     import time as _time
+
                     from telegram.error import RetryAfter, TimedOut
 
                     if isinstance(e, RetryAfter):
@@ -777,7 +780,9 @@ class KiroSessionACP:
                         except Exception as e2:
                             logger.error(f"Retry after flood control failed: {e2}")
                     elif isinstance(e, TimedOut):
-                        logger.warning(f"Telegram send timed out, retrying once after 2s")
+                        logger.warning(
+                            f"Telegram send timed out, retrying once after 2s"
+                        )
                         _time.sleep(2)
                         try:
                             future = asyncio.run_coroutine_threadsafe(
