@@ -439,11 +439,14 @@ class KiroSessionACP:
                         agent_data.get("typing_stop_event", threading.Event()).set()
                     elif status_type == "failed":
                         error = status.get("error", "Unknown error")
-                        self._send_to_telegram_sync(
-                            current_chat_id,
-                            f"❌ Compaction failed: {error}",
-                            agent_name=agent_name,
-                        )
+                        if "Not in compacting state" in error:
+                            logger.debug(f"Worker: Ignoring spurious compaction failure: {error}")
+                        else:
+                            self._send_to_telegram_sync(
+                                current_chat_id,
+                                f"❌ Compaction failed: {error}",
+                                agent_name=agent_name,
+                            )
                         agent_data.get("typing_stop_event", threading.Event()).set()
 
             session.on_compaction_status(on_compaction_status)
@@ -758,10 +761,37 @@ class KiroSessionACP:
                             f"Failed to send telegram message after 3 attempts: {e}"
                         )
                 except Exception as e:
-                    logger.error(f"Error sending telegram message: {e}")
-                    import traceback
+                    import time as _time
+                    from telegram.error import RetryAfter, TimedOut
 
-                    traceback.print_exc()
+                    if isinstance(e, RetryAfter):
+                        wait = e.retry_after + 1
+                        logger.warning(f"Flood control: waiting {wait}s before retry")
+                        _time.sleep(wait)
+                        try:
+                            future = asyncio.run_coroutine_threadsafe(
+                                self.send_to_telegram(chat_id, part),
+                                self.send_to_telegram.loop,
+                            )
+                            future.result(timeout=30.0)
+                        except Exception as e2:
+                            logger.error(f"Retry after flood control failed: {e2}")
+                    elif isinstance(e, TimedOut):
+                        logger.warning(f"Telegram send timed out, retrying once after 2s")
+                        _time.sleep(2)
+                        try:
+                            future = asyncio.run_coroutine_threadsafe(
+                                self.send_to_telegram(chat_id, part),
+                                self.send_to_telegram.loop,
+                            )
+                            future.result(timeout=30.0)
+                        except Exception as e2:
+                            logger.error(f"Retry after timeout failed: {e2}")
+                    else:
+                        logger.error(f"Error sending telegram message: {e}")
+                        import traceback
+
+                        traceback.print_exc()
         else:
             logger.warning(f"No send_to_telegram callback set")
 
