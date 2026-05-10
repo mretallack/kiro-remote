@@ -429,9 +429,12 @@ class KiroSessionACP:
                             agent_name=agent_name,
                         )
                     elif status_type == "completed":
+                        # Reset context tracking - usage will be updated on next turn
+                        self.context_tracker.reset_warnings(session_id)
+                        self.context_tracker.usage_by_session.pop(session_id, None)
                         self._send_to_telegram_sync(
                             current_chat_id,
-                            "✅ Compaction complete",
+                            "✅ Compaction complete (context usage will update on next message)",
                             agent_name=agent_name,
                         )
                         # Stop typing indicator - compaction doesn't produce a

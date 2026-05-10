@@ -871,6 +871,7 @@ Help
                 "file://~/.kiro/steering/**/*.md",
                 f"file://~/.kiro/agents/{name}/steering/*.md",
                 f"file://~/git/{name}/.kiro/steering/**/*.md",
+                "skill://~/.kiro/skills/**/SKILL.md",
             ],
             "hooks": {},
             "toolsSettings": {},
