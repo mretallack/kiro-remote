@@ -266,6 +266,74 @@ group_id = -1001234567890
 topic_cache = ~/.kiro/topic_agent_map.json
 ```
 
+### Topic Auto-Creation (`\topic sync`)
+
+The bot can create forum topics for all known agents automatically:
+
+```python
+async def sync_topics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Create forum topics for all agents that don't already have one."""
+    chat_id = update.effective_chat.id
+    existing_topics = set(self._topic_agent_cache.values())
+    agents = self._get_available_agent_names()
+
+    created = []
+    for agent in agents:
+        if agent not in existing_topics:
+            result = await context.bot.create_forum_topic(
+                chat_id=chat_id, name=agent
+            )
+            self._topic_agent_cache[result.message_thread_id] = agent
+            created.append(agent)
+
+    self._save_topic_cache()
+    await update.message.reply_text(
+        f"✅ Created {len(created)} topics: {', '.join(created)}" if created
+        else "✅ All agents already have topics"
+    )
+```
+
+Requires bot admin permission: `can_manage_topics`.
+
+### Auto-Sync on Startup
+
+When `group_id` is configured in `settings.ini`, the bot auto-syncs topics on startup:
+
+```python
+async def _auto_sync_topics(self):
+    """On startup, create topics for agents not already in cache."""
+    if not self.group_id:
+        return
+
+    self._load_topic_cache()
+    cached_agents = set(self._topic_agent_cache.values())
+    agents = self._get_available_agent_names()
+
+    for agent in agents:
+        if agent not in cached_agents:
+            try:
+                result = await self.application.bot.create_forum_topic(
+                    chat_id=self.group_id, name=agent
+                )
+                self._topic_agent_cache[result.message_thread_id] = agent
+            except Exception as e:
+                logger.warning(f"Failed to create topic for '{agent}': {e}")
+
+    self._save_topic_cache()
+```
+
+Flow:
+1. Bot starts → loads `topic_agent_map.json` cache
+2. If `group_id` configured → for each agent not in cache, call `createForumTopic`
+3. Cache updated and saved
+
+### Limitations of Topic Auto-Creation
+
+- **No Bot API to list existing topics**: The Telegram Bot API does not provide a `getForumTopics` method. Only the full MTProto client API (`channels.getForumTopics`) supports this. The bot cannot discover pre-existing topics.
+- **Duplicate topic names possible**: If topics were manually created before the bot ran (empty cache), the bot will create duplicates since Telegram allows multiple topics with the same name.
+- **First-run with existing topics**: Use `\topic register <agent>` in each pre-existing topic to populate the cache, OR delete the manual topics and let the bot recreate them.
+- **Cache is the source of truth**: If the cache file is deleted, the bot will create new topics on next startup (resulting in duplicates of any existing ones).
+
 ### Error Handling
 
 | Scenario | Behaviour |
@@ -296,6 +364,48 @@ await context.bot.send_chat_action(
 | `kiro_session_acp.py` | Add `send_message_to_agent()`, `start_agent_session()`, thread_id in response routing |
 | `settings.ini.template` | Add `[group]` section |
 | `README.md` | Document group topic feature |
+
+## Telegram Group Setup (Prerequisites)
+
+### 1. Create the group
+
+Create a new Telegram group and add the bot as a member.
+
+### 2. Enable forum topics
+
+Group settings → Edit → Enable **Topics** (auto-converts to supergroup).
+
+### 3. Bot admin permissions
+
+Promote the bot to admin with at minimum:
+- ✅ Read messages
+- ✅ Send messages
+
+### 4. Disable bot privacy mode
+
+In BotFather: `/mybots` → your bot → Bot Settings → Group Privacy → **Turn OFF**
+
+Without this, the bot won't receive messages in group topics.
+
+### 5. Create topics (automatic)
+
+The bot can auto-create topics for all known agents using `\topic sync` in the group. This requires the additional admin permission:
+- ✅ Manage Topics (`can_manage_topics`)
+
+Alternatively, create topics manually — each topic name must match an agent name (case-insensitive).
+
+### 6. Get the group ID
+
+```bash
+curl "https://api.telegram.org/bot<BOT_TOKEN>/getUpdates" | python3 -m json.tool | grep -A5 chat
+```
+
+The `chat.id` will be a negative number like `-1001234567890`. Optionally configure in `settings.ini`:
+
+```ini
+[group]
+group_id = -1001234567890
+```
 
 ## Out of Scope
 

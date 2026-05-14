@@ -54,22 +54,24 @@ class KiroSessionACP:
         # Output suppression: when True, output is queued instead of sent
         self.suppress_output = False
 
-    def get_available_models(self):
-        """Get list of available models for active agent."""
-        if not self.active_agent or self.active_agent not in self.agents:
+    def get_available_models(self, agent_name: str = None):
+        """Get list of available models for an agent."""
+        target = agent_name or self.active_agent
+        if not target or target not in self.agents:
             return None
-        return self.agents[self.active_agent].get("models", {})
+        return self.agents[target].get("models", {})
 
-    def get_available_modes(self):
-        """Get list of available modes for active agent."""
-        if not self.active_agent or self.active_agent not in self.agents:
+    def get_available_modes(self, agent_name: str = None):
+        """Get list of available modes for an agent."""
+        target = agent_name or self.active_agent
+        if not target or target not in self.agents:
             return None
-        return self.agents[self.active_agent].get("modes", {})
+        return self.agents[target].get("modes", {})
 
-    def set_model(self, model_id: str, chat_id: int):
-        """Set the model for the active agent (async-safe)."""
+    def set_model(self, model_id: str, chat_id: int, agent_name: str = None):
+        """Set the model for an agent (async-safe)."""
         self.message_queue.put(
-            {"type": "set_model", "model_id": model_id, "chat_id": chat_id}
+            {"type": "set_model", "model_id": model_id, "chat_id": chat_id, "agent_name": agent_name}
         )
 
     def set_mode(self, mode_id: str):
@@ -99,7 +101,12 @@ class KiroSessionACP:
                 msg_type = msg.get("type")
 
                 if msg_type == "send_message":
-                    self._handle_send_message(msg)
+                    # Dispatch to a thread so other agents aren't blocked
+                    threading.Thread(
+                        target=self._handle_send_message,
+                        args=(msg,),
+                        daemon=True,
+                    ).start()
                 elif msg_type == "start_session":
                     self._handle_start_session(msg)
                 elif msg_type == "set_model":
@@ -123,17 +130,20 @@ class KiroSessionACP:
         """Handle send_message request in worker thread."""
         text = msg["text"]
         chat_id = msg["chat_id"]
+        thread_id = msg.get("thread_id")
+        target_agent = msg.get("agent_name") or self.active_agent
 
-        logger.info(f"Worker: Sending message: {text[:50]}")
+        logger.info(f"Worker: Sending message: {text[:50]} (agent={target_agent}, thread={thread_id})")
 
-        if not self.active_agent or self.active_agent not in self.agents:
-            self._send_error(chat_id, "No active agent")
+        if not target_agent or target_agent not in self.agents:
+            self._send_error(chat_id, "No active agent", thread_id=thread_id)
             return
 
-        current_agent_name = self.active_agent
+        current_agent_name = target_agent
         agent_data = self.agents[current_agent_name]
         session = agent_data["session"]
         agent_data["chat_id"] = chat_id
+        agent_data["thread_id"] = thread_id
         agent_data["chunks"] = []  # Reset chunks for new message
 
         # Fix 4: Check usage limit
@@ -142,6 +152,7 @@ class KiroSessionACP:
                 chat_id,
                 "❌ Monthly usage limit reached. Try again next month or check your plan. Use \\cancel to reset.",
                 agent_name=current_agent_name,
+                thread_id=thread_id,
             )
             return
 
@@ -151,6 +162,7 @@ class KiroSessionACP:
                 chat_id,
                 "⏳ Previous request still processing. Use \\cancel to abort it.",
                 agent_name=current_agent_name,
+                thread_id=thread_id,
             )
             return
 
@@ -204,7 +216,7 @@ class KiroSessionACP:
         agent_data["typing_stop_event"].clear()
         agent_data["typing_thread"] = threading.Thread(
             target=self._typing_indicator_loop,
-            args=(chat_id, agent_data["typing_stop_event"]),
+            args=(chat_id, agent_data["typing_stop_event"], thread_id),
             daemon=True,
         )
         agent_data["typing_thread"].start()
@@ -275,7 +287,8 @@ class KiroSessionACP:
                 if output_parts:
                     message = "\n".join(output_parts)
                     self._send_to_telegram_sync(
-                        agent_data["chat_id"], message, agent_name=current_agent_name
+                        agent_data["chat_id"], message, agent_name=current_agent_name,
+                        thread_id=agent_data.get("thread_id"),
                     )
 
             # Handle file read output (Text format)
@@ -292,7 +305,8 @@ class KiroSessionACP:
 
                 message = f"**File Content:**\n```\n{text_content}\n```"
                 self._send_to_telegram_sync(
-                    agent_data["chat_id"], message, agent_name=current_agent_name
+                    agent_data["chat_id"], message, agent_name=current_agent_name,
+                    thread_id=agent_data.get("thread_id"),
                 )
 
         def on_turn_end():
@@ -355,9 +369,10 @@ class KiroSessionACP:
                     chat_id,
                     f"⏱️ Request timed out after {self.prompt_timeout}s. The operation may still be running — use \\cancel to abort.",
                     agent_name=current_agent_name,
+                    thread_id=thread_id,
                 )
             else:
-                self._send_error(chat_id, error_str, agent_name=current_agent_name)
+                self._send_error(chat_id, error_str, agent_name=current_agent_name, thread_id=thread_id)
 
     def _handle_start_session(self, msg: Dict[str, Any]):
         """Handle start_session request in worker thread."""
@@ -517,6 +532,7 @@ class KiroSessionACP:
                 "agent_name": agent_name,
                 "chunks": [],  # Store chunks per agent
                 "chat_id": None,  # Store chat_id per agent
+                "thread_id": None,  # Store thread_id for group topic routing
                 "models": session_result.get("models", {}),  # Store models info
                 "modes": session_result.get("modes", {}),  # Store modes info
                 "chunk_timer": None,  # Timer for chunk buffering
@@ -529,8 +545,9 @@ class KiroSessionACP:
                 "subagents": {},  # Active subagents {sessionId: info}
             }
 
-            self.active_agent = agent_name
-            logger.info(f"Worker: Session started for {agent_name}")
+            if not msg.get("background"):
+                self.active_agent = agent_name
+            logger.info(f"Worker: Session started for {agent_name} (background={msg.get('background', False)})")
 
         except Exception as e:
             logger.error(f"Worker: Error starting session: {e}")
@@ -542,13 +559,14 @@ class KiroSessionACP:
         """Handle set_model request in worker thread."""
         model_id = msg["model_id"]
         chat_id = msg["chat_id"]
+        target_agent = msg.get("agent_name") or self.active_agent
 
-        if not self.active_agent or self.active_agent not in self.agents:
+        if not target_agent or target_agent not in self.agents:
             self._send_error(chat_id, "No active agent")
             return
 
         try:
-            agent_data = self.agents[self.active_agent]
+            agent_data = self.agents[target_agent]
             session = agent_data["session"]
             session.client.set_model(session.session_id, model_id)
 
@@ -556,7 +574,7 @@ class KiroSessionACP:
             agent_data["models"]["currentModelId"] = model_id
 
             self._send_to_telegram_sync(chat_id, f"✓ Model set to: {model_id}")
-            logger.info(f"Worker: Set model to {model_id}")
+            logger.info(f"Worker: Set model to {model_id} for {target_agent}")
         except Exception as e:
             logger.error(f"Worker: Error setting model: {e}")
             import traceback
@@ -590,13 +608,14 @@ class KiroSessionACP:
 
     def _handle_cancel(self, msg: Dict[str, Any]):
         """Handle cancel request in worker thread."""
-        if self.active_agent and self.active_agent in self.agents:
-            agent_data = self.agents[self.active_agent]
+        target = msg.get("agent_name") or self.active_agent
+        if target and target in self.agents:
+            agent_data = self.agents[target]
             session = agent_data["session"]
             session.cancel()
             agent_data["prompt_in_flight"] = False
             agent_data["usage_limit_reached"] = False
-            logger.info("Worker: Cancelled operation")
+            logger.info(f"Worker: Cancelled operation for agent {target}")
 
     def _flush_chunks(self, agent_data: Dict[str, Any]):
         """Flush buffered chunks to Telegram."""
@@ -612,24 +631,27 @@ class KiroSessionACP:
                         agent_data["chat_id"],
                         message,
                         agent_name=agent_data.get("agent_name"),
+                        thread_id=agent_data.get("thread_id"),
                     )
                 except Exception as e:
                     logger.error(f"Error flushing chunks: {e}")
                 chunks.clear()
 
-    def _typing_indicator_loop(self, chat_id: int, stop_event: threading.Event):
+    def _typing_indicator_loop(self, chat_id: int, stop_event: threading.Event, thread_id: int = None):
         """Background thread that refreshes typing indicator."""
-        logger.info(f"Worker: Typing indicator thread started for chat {chat_id}")
+        logger.info(f"Worker: Typing indicator thread started for chat {chat_id} thread {thread_id}")
         while not stop_event.is_set():
             try:
                 # Send typing action via async bridge
                 if self.application and self.event_loop:
                     from telegram.constants import ChatAction
 
+                    kwargs = {"chat_id": chat_id, "action": ChatAction.TYPING}
+                    if thread_id:
+                        kwargs["message_thread_id"] = thread_id
+
                     asyncio.run_coroutine_threadsafe(
-                        self.application.bot.send_chat_action(
-                            chat_id=chat_id, action=ChatAction.TYPING
-                        ),
+                        self.application.bot.send_chat_action(**kwargs),
                         self.event_loop,
                     )
             except Exception as e:
@@ -708,14 +730,15 @@ class KiroSessionACP:
 
         return chunks
 
-    def _send_to_telegram_sync(self, chat_id: int, text: str, agent_name: str = None):
+    def _send_to_telegram_sync(self, chat_id: int, text: str, agent_name: str = None, thread_id: int = None):
         """Send message to Telegram from worker thread.
 
         If agent_name is provided, output is queued when that agent is not
         active or when output is globally suppressed.
         """
         # Gate: queue output if agent is not active or output is suppressed
-        if agent_name and (agent_name != self.active_agent or self.suppress_output):
+        # Skip gating for group messages (thread_id present) — they always send
+        if agent_name and not thread_id and (agent_name != self.active_agent or self.suppress_output):
             agent_data = self.agents.get(agent_name)
             if agent_data is not None:
                 agent_data["pending_output"].append((chat_id, text))
@@ -736,7 +759,7 @@ class KiroSessionACP:
                 try:
                     logger.debug(f"Worker: Scheduling async call to Telegram")
                     future = asyncio.run_coroutine_threadsafe(
-                        self.send_to_telegram(chat_id, part),
+                        self.send_to_telegram(chat_id, part, thread_id=thread_id),
                         self.send_to_telegram.loop,
                     )
                     # Wait for the message to actually be sent (with timeout)
@@ -754,7 +777,7 @@ class KiroSessionACP:
                         time.sleep(wait)
                         try:
                             future = asyncio.run_coroutine_threadsafe(
-                                self.send_to_telegram(chat_id, part),
+                                self.send_to_telegram(chat_id, part, thread_id=thread_id),
                                 self.send_to_telegram.loop,
                             )
                             future.result(timeout=10.0)
@@ -776,7 +799,7 @@ class KiroSessionACP:
                         _time.sleep(wait)
                         try:
                             future = asyncio.run_coroutine_threadsafe(
-                                self.send_to_telegram(chat_id, part),
+                                self.send_to_telegram(chat_id, part, thread_id=thread_id),
                                 self.send_to_telegram.loop,
                             )
                             future.result(timeout=30.0)
@@ -789,7 +812,7 @@ class KiroSessionACP:
                         _time.sleep(2)
                         try:
                             future = asyncio.run_coroutine_threadsafe(
-                                self.send_to_telegram(chat_id, part),
+                                self.send_to_telegram(chat_id, part, thread_id=thread_id),
                                 self.send_to_telegram.loop,
                             )
                             future.result(timeout=30.0)
@@ -850,7 +873,7 @@ class KiroSessionACP:
 
         return text
 
-    def _send_error(self, chat_id: int, error: str, agent_name: str = None):
+    def _send_error(self, chat_id: int, error: str, agent_name: str = None, thread_id: int = None):
         """Send error message to Telegram."""
         # Try to extract meaningful error from JSON-RPC error
         if "monthly usage limit has been reached" in error.lower():
@@ -870,7 +893,7 @@ class KiroSessionACP:
         else:
             user_message = f"❌ Error: {error}"
 
-        self._send_to_telegram_sync(chat_id, user_message, agent_name=agent_name)
+        self._send_to_telegram_sync(chat_id, user_message, agent_name=agent_name, thread_id=thread_id)
 
     # Public API (called from async layer)
 
@@ -918,28 +941,60 @@ class KiroSessionACP:
             }
         )
 
+    def start_agent_background(self, agent_name: str, working_dir: str = None):
+        """Start an agent session without switching active_agent (for group topics)."""
+        if not self.running:
+            self.start_worker()
+
+        if working_dir is None:
+            config = self._load_agent_config()
+            working_dir = (
+                config.get("agents", {}).get(agent_name, {}).get("working_directory")
+            )
+            if not working_dir:
+                working_dir = config.get(
+                    "default_directory", "/home/mark/git/remote-kiro"
+                )
+
+        logger.info(f"Starting background session for agent '{agent_name}' in: {working_dir}")
+        self.message_queue.put(
+            {
+                "type": "start_session",
+                "agent_name": agent_name,
+                "working_dir": working_dir,
+                "background": True,
+            }
+        )
+
     def send_message(self, text: str, chat_id: int):
         """Send message to Kiro (async-safe)."""
         self.message_queue.put(
             {"type": "send_message", "text": text, "chat_id": chat_id}
         )
 
-    def cancel_operation(self):
+    def send_message_to_agent(self, agent_name: str, text: str, chat_id: int, thread_id: int = None):
+        """Send message to a specific agent (for group topic routing)."""
+        self.message_queue.put(
+            {"type": "send_message", "text": text, "chat_id": chat_id, "agent_name": agent_name, "thread_id": thread_id}
+        )
+
+    def cancel_operation(self, agent_name: str = None):
         """Cancel current operation (async-safe).
 
         Sends cancel directly to kiro-cli, bypassing the worker queue
         which may be blocked waiting for a prompt response.
         """
-        if self.active_agent and self.active_agent in self.agents:
-            agent_data = self.agents[self.active_agent]
+        target = agent_name or self.active_agent
+        if target and target in self.agents:
+            agent_data = self.agents[target]
             try:
                 agent_data["session"].cancel()
                 agent_data["prompt_in_flight"] = False
-                logger.info("Cancel sent directly to kiro-cli")
+                logger.info(f"Cancel sent directly to kiro-cli for agent {target}")
             except Exception as e:
                 logger.error(f"Error sending direct cancel: {e}")
         # Also queue so worker cleans up when it unblocks
-        self.message_queue.put({"type": "cancel"})
+        self.message_queue.put({"type": "cancel", "agent_name": agent_name})
 
     def get_subagents(self) -> dict:
         """Get active subagents for the current agent."""

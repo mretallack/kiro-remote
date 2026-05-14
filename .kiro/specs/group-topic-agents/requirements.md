@@ -73,6 +73,17 @@ THE SYSTEM SHALL compact the session for that topic's agent
 WHEN a user sends `\model` commands in a topic
 THE SYSTEM SHALL apply model changes to that topic's agent only
 
+### Topic Auto-Creation
+
+WHEN a user sends `\topic sync` in the group
+THE SYSTEM SHALL create a forum topic for each known agent that does not already have a topic
+
+WHEN creating topics automatically
+THE SYSTEM SHALL name each topic after the agent name and cache the mapping
+
+WHEN the bot lacks `can_manage_topics` permission
+THE SYSTEM SHALL reply with an error explaining the missing permission
+
 ### Backward Compatibility
 
 WHEN the bot receives a direct message (1-to-1 chat)
