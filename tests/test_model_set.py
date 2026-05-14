@@ -27,7 +27,7 @@ def test_model_set():
     loop_thread = threading.Thread(target=run_loop, daemon=True)
     loop_thread.start()
 
-    async def mock_send_to_telegram(chat_id, text):
+    async def mock_send_to_telegram(chat_id, text, thread_id=None):
         print(f"[TELEGRAM] {text}")
         messages_sent.append(text)
 

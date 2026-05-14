@@ -182,7 +182,58 @@ This gives each agent the right context automatically. If no matching mode exist
 - **Role Specialization**: Agents with different instructions for specific tasks
 - **Context Management**: Keep separate conversation contexts for different projects
 
+## Group Topics
 
+Use a Telegram group with forum topics enabled to interact with multiple agents simultaneously — each topic maps to one agent.
+
+### Setup
+
+1. Create a Telegram group and enable "Topics" in group settings
+2. Add the bot to the group and make it admin (needs `can_manage_topics` permission)
+3. Create topics named after your agents (case-insensitive matching)
+4. Or use `\topic sync` in any topic to auto-create topics for all agents
+
+### Configuration
+
+Add to `settings.ini`:
+```ini
+[group]
+# Optional: restrict to specific group ID
+# group_id = -1003610178913
+# Path to topic-agent mapping cache
+topic_cache = ~/.kiro/topic_agent_map.json
+```
+
+### Topic Commands
+
+These commands work within group topics and are scoped to the topic's agent:
+
+```
+\topic register <agent>  # Manually map this topic to an agent
+\topic sync              # Create topics for all agents that don't have one
+\cancel                  # Cancel the topic's agent operation
+\context                 # Show context usage for the topic's agent
+\compact                 # Compact the topic's agent conversation
+\model list              # List models for the topic's agent
+\model <model_id>        # Set model for the topic's agent
+\agent list              # List all agents (works in any topic)
+```
+
+### How It Works
+
+1. **Topic Name Matching**: Topic names are matched case-insensitively to agent names
+2. **Automatic Caching**: Once resolved, topic-to-agent mappings are cached persistently
+3. **Background Sessions**: Agents started from topics don't change the active DM agent
+4. **Lifecycle Events**: Topic creation/rename automatically updates the cache
+5. **Attachments**: Photos and documents sent in topics route to the correct agent
+
+### Naming Convention
+
+Topic names should match agent names. For example:
+- Topic "facebook_dev" → agent `facebook_dev`
+- Topic "Kiro Default" → agent `kiro_default` (case-insensitive, spaces/underscores normalized)
+
+If automatic matching fails, use `\topic register <agent>` to manually map a topic.
 
 ## Agent File Structure
 
