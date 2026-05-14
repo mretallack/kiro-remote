@@ -2,7 +2,7 @@
 token = YOUR_BOT_TOKEN_HERE
 
 [bot]
-authorized_user = markretallack
+authorized_user_id = YOUR_TELEGRAM_USER_ID
 auto_trust = true
 progress_updates = true
 # Directory for storing downloaded attachments (images, documents, etc.)

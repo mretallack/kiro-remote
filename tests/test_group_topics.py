@@ -27,7 +27,7 @@ def bot():
 
         b = TelegramBot.__new__(TelegramBot)
         b.token = "fake-token"
-        b.authorized_user = "testuser"
+        b.authorized_user_id = 12345
         b.kiro = mock_kiro
         b.user_states = {}
         b.loop = None

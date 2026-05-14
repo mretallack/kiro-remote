@@ -45,7 +45,7 @@ class TelegramBot:
     def __init__(
         self,
         token,
-        authorized_user,
+        authorized_user_id,
         attachments_dir=None,
         chunk_timeout=2.0,
         typing_refresh_interval=4.0,
@@ -54,7 +54,7 @@ class TelegramBot:
         topic_cache_path=None,
     ):
         self.token = token
-        self.authorized_user = authorized_user
+        self.authorized_user_id = int(authorized_user_id)
         self.attachments_dir = Path(
             attachments_dir or "~/.kiro/bot_attachments"
         ).expanduser()
@@ -214,8 +214,7 @@ class TelegramBot:
 
     async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle photo uploads"""
-        username = update.effective_user.username
-        if username != self.authorized_user:
+        if update.effective_user.id != self.authorized_user_id:
             return
 
         try:
@@ -270,8 +269,7 @@ class TelegramBot:
 
     async def handle_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle document uploads"""
-        username = update.effective_user.username
-        if username != self.authorized_user:
+        if update.effective_user.id != self.authorized_user_id:
             return
 
         try:
@@ -424,7 +422,7 @@ class TelegramBot:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ):
         """Handle forum topic creation — auto-populate cache if name matches an agent."""
-        if update.effective_user.username != self.authorized_user:
+        if update.effective_user.id != self.authorized_user_id:
             return
         topic = update.message.forum_topic_created
         if not topic:
@@ -440,7 +438,7 @@ class TelegramBot:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ):
         """Handle forum topic rename — update or invalidate cache."""
-        if update.effective_user.username != self.authorized_user:
+        if update.effective_user.id != self.authorized_user_id:
             return
         edited = update.message.forum_topic_edited
         if not edited:
@@ -661,7 +659,7 @@ class TelegramBot:
         chat_id = update.effective_chat.id
         print(f"[DEBUG] Received message from user: {username}")
 
-        if username != self.authorized_user:
+        if update.effective_user.id != self.authorized_user_id:
             print(f"[DEBUG] Unauthorized user {username}, ignoring")
             return
 
@@ -906,9 +904,9 @@ class TelegramBot:
         print(f"[DEBUG] Context object: {context}")
 
         # Authorization check
-        if update.effective_user.username != self.authorized_user:
+        if update.effective_user.id != self.authorized_user_id:
             print(
-                f"[DEBUG] Unauthorized user: {update.effective_user.username} != {self.authorized_user}"
+                f"[DEBUG] Unauthorized user ID: {update.effective_user.id} != {self.authorized_user_id}"
             )
             return
 
@@ -965,7 +963,7 @@ class TelegramBot:
 
     async def show_subagents(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show active subagents for the current agent."""
-        if update.effective_user.username != self.authorized_user:
+        if update.effective_user.id != self.authorized_user_id:
             return
 
         subagents = self.kiro.get_subagents()
@@ -1019,7 +1017,7 @@ Help
 
     async def show_usage(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle intercepted /usage command - show credits and billing info"""
-        if update.effective_user.username != self.authorized_user:
+        if update.effective_user.id != self.authorized_user_id:
             return
 
         try:
@@ -1031,7 +1029,7 @@ Help
 
     async def show_models(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle intercepted /model list command"""
-        if update.effective_user.username != self.authorized_user:
+        if update.effective_user.id != self.authorized_user_id:
             return
 
         try:
@@ -1074,7 +1072,7 @@ Help
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, model_id: str
     ):
         """Handle intercepted /model <model_id> command"""
-        if update.effective_user.username != self.authorized_user:
+        if update.effective_user.id != self.authorized_user_id:
             return
 
         try:
@@ -1328,7 +1326,7 @@ Help
 
     async def create_agent(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /create_agent command"""
-        if update.effective_user.username != self.authorized_user:
+        if update.effective_user.id != self.authorized_user_id:
             return
 
         args = context.args
@@ -1367,7 +1365,7 @@ Help
 
     async def switch_agent(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /switch_agent command"""
-        if update.effective_user.username != self.authorized_user:
+        if update.effective_user.id != self.authorized_user_id:
             return
 
         args = context.args
@@ -1537,7 +1535,7 @@ if __name__ == "__main__":
     config.read("settings.ini")
 
     TOKEN = config.get("telegram", "token")
-    AUTHORIZED_USER = config.get("bot", "authorized_user")
+    AUTHORIZED_USER_ID = config.getint("bot", "authorized_user_id")
     ATTACHMENTS_DIR = config.get(
         "bot", "attachments_dir", fallback="~/.kiro/bot_attachments"
     )
@@ -1561,7 +1559,7 @@ if __name__ == "__main__":
 
     bot = TelegramBot(
         TOKEN,
-        AUTHORIZED_USER,
+        AUTHORIZED_USER_ID,
         ATTACHMENTS_DIR,
         CHUNK_TIMEOUT,
         TYPING_REFRESH_INTERVAL,
