@@ -71,19 +71,33 @@ class TestMatchAgentName:
     """Test _match_agent_name case-insensitive matching."""
 
     def test_exact_match(self, bot):
-        with patch.object(bot, "_get_available_agent_names", return_value=["facebook_dev", "kiro_default"]):
+        with patch.object(
+            bot,
+            "_get_available_agent_names",
+            return_value=["facebook_dev", "kiro_default"],
+        ):
             assert bot._match_agent_name("facebook_dev") == "facebook_dev"
 
     def test_case_insensitive(self, bot):
-        with patch.object(bot, "_get_available_agent_names", return_value=["facebook_dev", "kiro_default"]):
+        with patch.object(
+            bot,
+            "_get_available_agent_names",
+            return_value=["facebook_dev", "kiro_default"],
+        ):
             assert bot._match_agent_name("Facebook_Dev") == "facebook_dev"
 
     def test_no_match(self, bot):
-        with patch.object(bot, "_get_available_agent_names", return_value=["facebook_dev", "kiro_default"]):
+        with patch.object(
+            bot,
+            "_get_available_agent_names",
+            return_value=["facebook_dev", "kiro_default"],
+        ):
             assert bot._match_agent_name("nonexistent") is None
 
     def test_spaces_to_underscores(self, bot):
-        with patch.object(bot, "_get_available_agent_names", return_value=["kiro_default"]):
+        with patch.object(
+            bot, "_get_available_agent_names", return_value=["kiro_default"]
+        ):
             assert bot._match_agent_name("Kiro Default") == "kiro_default"
 
 
@@ -132,7 +146,11 @@ class TestResolveTopicAgent:
         mock_update.message.reply_to_message.forum_topic_created = Mock()
         mock_update.message.reply_to_message.forum_topic_created.name = "Facebook Dev"
 
-        with patch.object(bot, "_get_available_agent_names", return_value=["facebook_dev", "kiro_default"]):
+        with patch.object(
+            bot,
+            "_get_available_agent_names",
+            return_value=["facebook_dev", "kiro_default"],
+        ):
             result = await bot._resolve_topic_agent(mock_update, mock_context, 42)
 
         assert result == "facebook_dev"
@@ -161,7 +179,9 @@ class TestGroupMessageRouting:
         with patch("asyncio.sleep", new_callable=AsyncMock):
             await bot.handle_group_message(mock_update, mock_context)
 
-        bot.kiro.start_agent_background.assert_called_once_with(agent_name="facebook_dev")
+        bot.kiro.start_agent_background.assert_called_once_with(
+            agent_name="facebook_dev"
+        )
 
     @pytest.mark.asyncio
     async def test_no_thread_id_ignored(self, bot, mock_update, mock_context):
@@ -178,7 +198,9 @@ class TestGroupCommands:
         bot._topic_agent_cache[42] = "facebook_dev"
         mock_update.message.text = "\\cancel"
 
-        result = await bot.handle_intercepted_commands_group(mock_update, mock_context, 42)
+        result = await bot.handle_intercepted_commands_group(
+            mock_update, mock_context, 42
+        )
 
         assert result is True
         bot.kiro.cancel_operation.assert_called_once_with(agent_name="facebook_dev")
@@ -189,7 +211,9 @@ class TestGroupCommands:
         bot.kiro.agents = {"facebook_dev": {"session_id": "s1"}}
         mock_update.message.text = "\\context"
 
-        result = await bot.handle_intercepted_commands_group(mock_update, mock_context, 42)
+        result = await bot.handle_intercepted_commands_group(
+            mock_update, mock_context, 42
+        )
 
         assert result is True
         mock_context.bot.send_message.assert_called_once()
@@ -200,8 +224,12 @@ class TestGroupCommands:
     @pytest.mark.asyncio
     async def test_topic_register(self, bot, mock_update, mock_context):
         mock_update.message.text = "\\topic register facebook_dev"
-        with patch.object(bot, "_get_available_agent_names", return_value=["facebook_dev"]):
-            result = await bot.handle_intercepted_commands_group(mock_update, mock_context, 42)
+        with patch.object(
+            bot, "_get_available_agent_names", return_value=["facebook_dev"]
+        ):
+            result = await bot.handle_intercepted_commands_group(
+                mock_update, mock_context, 42
+            )
 
         assert result is True
         assert bot._topic_agent_cache[42] == "facebook_dev"
@@ -216,7 +244,9 @@ class TestForumTopicLifecycle:
         mock_update.message.forum_topic_created.name = "facebook_dev"
         mock_update.message.message_thread_id = 99
 
-        with patch.object(bot, "_get_available_agent_names", return_value=["facebook_dev"]):
+        with patch.object(
+            bot, "_get_available_agent_names", return_value=["facebook_dev"]
+        ):
             await bot.handle_forum_topic_created(mock_update, mock_context)
 
         assert bot._topic_agent_cache[99] == "facebook_dev"
@@ -228,19 +258,27 @@ class TestForumTopicLifecycle:
         mock_update.message.forum_topic_edited.name = "kiro_default"
         mock_update.message.message_thread_id = 42
 
-        with patch.object(bot, "_get_available_agent_names", return_value=["kiro_default"]):
+        with patch.object(
+            bot, "_get_available_agent_names", return_value=["kiro_default"]
+        ):
             await bot.handle_forum_topic_edited(mock_update, mock_context)
 
         assert bot._topic_agent_cache[42] == "kiro_default"
 
     @pytest.mark.asyncio
-    async def test_topic_edited_invalidates_on_no_match(self, bot, mock_update, mock_context):
+    async def test_topic_edited_invalidates_on_no_match(
+        self, bot, mock_update, mock_context
+    ):
         bot._topic_agent_cache[42] = "facebook_dev"
         mock_update.message.forum_topic_edited = Mock()
         mock_update.message.forum_topic_edited.name = "random_name"
         mock_update.message.message_thread_id = 42
 
-        with patch.object(bot, "_get_available_agent_names", return_value=["facebook_dev", "kiro_default"]):
+        with patch.object(
+            bot,
+            "_get_available_agent_names",
+            return_value=["facebook_dev", "kiro_default"],
+        ):
             await bot.handle_forum_topic_edited(mock_update, mock_context)
 
         assert 42 not in bot._topic_agent_cache

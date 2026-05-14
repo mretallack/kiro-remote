@@ -115,10 +115,15 @@ class TelegramBot:
 
         # Forum topic lifecycle handlers
         self.application.add_handler(
-            MessageHandler(filters.StatusUpdate.FORUM_TOPIC_CREATED, self.handle_forum_topic_created)
+            MessageHandler(
+                filters.StatusUpdate.FORUM_TOPIC_CREATED,
+                self.handle_forum_topic_created,
+            )
         )
         self.application.add_handler(
-            MessageHandler(filters.StatusUpdate.FORUM_TOPIC_EDITED, self.handle_forum_topic_edited)
+            MessageHandler(
+                filters.StatusUpdate.FORUM_TOPIC_EDITED, self.handle_forum_topic_edited
+            )
         )
 
         # Global error handler for transient network errors (Fix 5)
@@ -152,7 +157,9 @@ class TelegramBot:
                     data = json.load(f)
                 # Keys are stored as strings in JSON, convert to int
                 self._topic_agent_cache = {int(k): v for k, v in data.items()}
-                logger.info(f"Loaded topic cache: {len(self._topic_agent_cache)} entries")
+                logger.info(
+                    f"Loaded topic cache: {len(self._topic_agent_cache)} entries"
+                )
             except Exception as e:
                 logger.error(f"Failed to load topic cache: {e}")
                 self._topic_agent_cache = {}
@@ -162,7 +169,9 @@ class TelegramBot:
         try:
             self._topic_cache_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self._topic_cache_path, "w") as f:
-                json.dump({str(k): v for k, v in self._topic_agent_cache.items()}, f, indent=2)
+                json.dump(
+                    {str(k): v for k, v in self._topic_agent_cache.items()}, f, indent=2
+                )
             logger.info(f"Saved topic cache: {len(self._topic_agent_cache)} entries")
         except Exception as e:
             logger.error(f"Failed to save topic cache: {e}")
@@ -237,11 +246,16 @@ class TelegramBot:
                     if agent_name not in self.kiro.agents:
                         self.kiro.start_agent_background(agent_name=agent_name)
                         import asyncio
+
                         await asyncio.sleep(2)
                     await context.bot.send_chat_action(
-                        chat_id=chat_id, action=ChatAction.TYPING, message_thread_id=thread_id
+                        chat_id=chat_id,
+                        action=ChatAction.TYPING,
+                        message_thread_id=thread_id,
                     )
-                    self.kiro.send_message_to_agent(agent_name, message, chat_id, thread_id)
+                    self.kiro.send_message_to_agent(
+                        agent_name, message, chat_id, thread_id
+                    )
                 return
 
             # 1-to-1 chat
@@ -287,11 +301,16 @@ class TelegramBot:
                     if agent_name not in self.kiro.agents:
                         self.kiro.start_agent_background(agent_name=agent_name)
                         import asyncio
+
                         await asyncio.sleep(2)
                     await context.bot.send_chat_action(
-                        chat_id=chat_id, action=ChatAction.TYPING, message_thread_id=thread_id
+                        chat_id=chat_id,
+                        action=ChatAction.TYPING,
+                        message_thread_id=thread_id,
                     )
-                    self.kiro.send_message_to_agent(agent_name, message, chat_id, thread_id)
+                    self.kiro.send_message_to_agent(
+                        agent_name, message, chat_id, thread_id
+                    )
                 return
 
             # 1-to-1 chat
@@ -304,9 +323,18 @@ class TelegramBot:
             logger.error(f"Error handling document: {e}")
             await update.message.reply_text(f"❌ Failed to process document: {e}")
 
-    async def handle_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, thread_id_override: int = None):
+    async def handle_group_message(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        thread_id_override: int = None,
+    ):
         """Handle message in a group forum topic."""
-        thread_id = thread_id_override if thread_id_override is not None else update.message.message_thread_id
+        thread_id = (
+            thread_id_override
+            if thread_id_override is not None
+            else update.message.message_thread_id
+        )
         if thread_id is None:
             return  # General topic or non-forum message
 
@@ -314,7 +342,9 @@ class TelegramBot:
         message_text = update.message.text
 
         # Check for intercepted commands first
-        if message_text and await self.handle_intercepted_commands_group(update, context, thread_id):
+        if message_text and await self.handle_intercepted_commands_group(
+            update, context, thread_id
+        ):
             return
 
         # Resolve topic to agent
@@ -333,6 +363,7 @@ class TelegramBot:
             self.kiro.start_agent_background(agent_name=agent_name)
             # Give it time to start
             import asyncio
+
             await asyncio.sleep(2)
 
         # Send typing indicator
@@ -354,7 +385,10 @@ class TelegramBot:
 
         # Try to get topic name from the message's reply_to_message (forum_topic_created)
         topic_name = None
-        if update.message.reply_to_message and update.message.reply_to_message.forum_topic_created:
+        if (
+            update.message.reply_to_message
+            and update.message.reply_to_message.forum_topic_created
+        ):
             topic_name = update.message.reply_to_message.forum_topic_created.name
 
         if not topic_name:
@@ -386,7 +420,9 @@ class TelegramBot:
         logger.info(f"Cached topic {thread_id} -> agent {agent_name}")
         return agent_name
 
-    async def handle_forum_topic_created(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def handle_forum_topic_created(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
         """Handle forum topic creation — auto-populate cache if name matches an agent."""
         if update.effective_user.username != self.authorized_user:
             return
@@ -400,7 +436,9 @@ class TelegramBot:
             self._save_topic_cache()
             logger.info(f"Auto-cached new topic {thread_id} -> {agent_name}")
 
-    async def handle_forum_topic_edited(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def handle_forum_topic_edited(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
         """Handle forum topic rename — update or invalidate cache."""
         if update.effective_user.username != self.authorized_user:
             return
@@ -418,9 +456,13 @@ class TelegramBot:
             elif thread_id in self._topic_agent_cache:
                 del self._topic_agent_cache[thread_id]
                 self._save_topic_cache()
-                logger.info(f"Invalidated topic cache for {thread_id} (renamed to '{new_name}')")
+                logger.info(
+                    f"Invalidated topic cache for {thread_id} (renamed to '{new_name}')"
+                )
 
-    async def handle_intercepted_commands_group(self, update: Update, context: ContextTypes.DEFAULT_TYPE, thread_id: int) -> bool:
+    async def handle_intercepted_commands_group(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, thread_id: int
+    ) -> bool:
         """Handle bot commands in group topics. Returns True if intercepted."""
         message_text = update.message.text.strip()
         normalized = message_text.replace("\\", "/")
@@ -480,19 +522,35 @@ class TelegramBot:
                 agent_data = self.kiro.agents[agent_name]
                 session_id = agent_data["session_id"]
                 usage = self.kiro.context_tracker.get_usage(session_id)
-                text = f"📊 Context usage ({agent_name}): {usage:.1f}%" if usage else f"📊 Context usage ({agent_name}): Unknown"
-                await context.bot.send_message(chat_id=chat_id, text=text, message_thread_id=thread_id)
+                text = (
+                    f"📊 Context usage ({agent_name}): {usage:.1f}%"
+                    if usage
+                    else f"📊 Context usage ({agent_name}): Unknown"
+                )
+                await context.bot.send_message(
+                    chat_id=chat_id, text=text, message_thread_id=thread_id
+                )
             else:
-                await context.bot.send_message(chat_id=chat_id, text="❌ No active agent for this topic", message_thread_id=thread_id)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="❌ No active agent for this topic",
+                    message_thread_id=thread_id,
+                )
             return True
 
         # Compact - scoped to topic's agent
         if normalized == "/compact":
             agent_name = self._topic_agent_cache.get(thread_id)
             if agent_name and agent_name in self.kiro.agents:
-                self.kiro.send_message_to_agent(agent_name, "/compact", chat_id, thread_id)
+                self.kiro.send_message_to_agent(
+                    agent_name, "/compact", chat_id, thread_id
+                )
             else:
-                await context.bot.send_message(chat_id=chat_id, text="❌ No active agent for this topic", message_thread_id=thread_id)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="❌ No active agent for this topic",
+                    message_thread_id=thread_id,
+                )
             return True
 
         # Agent list
@@ -517,19 +575,40 @@ class TelegramBot:
                                 desc = model.get("description", "")
                                 marker = "→ " if mid == current_model else "  "
                                 response += f"{marker}<code>{mid}</code> - {desc}\n"
-                            await context.bot.send_message(chat_id=chat_id, text=response, message_thread_id=thread_id, parse_mode="HTML")
+                            await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=response,
+                                message_thread_id=thread_id,
+                                parse_mode="HTML",
+                            )
                         else:
-                            await context.bot.send_message(chat_id=chat_id, text="❌ No model info available", message_thread_id=thread_id)
+                            await context.bot.send_message(
+                                chat_id=chat_id,
+                                text="❌ No model info available",
+                                message_thread_id=thread_id,
+                            )
                     else:
-                        await context.bot.send_message(chat_id=chat_id, text="❌ No active agent for this topic", message_thread_id=thread_id)
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text="❌ No active agent for this topic",
+                            message_thread_id=thread_id,
+                        )
                 else:
                     model_id = parts[1]
                     if agent_name and agent_name in self.kiro.agents:
                         self.kiro.set_model(model_id, chat_id, agent_name=agent_name)
                     else:
-                        await context.bot.send_message(chat_id=chat_id, text="❌ No active agent for this topic", message_thread_id=thread_id)
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text="❌ No active agent for this topic",
+                            message_thread_id=thread_id,
+                        )
             else:
-                await context.bot.send_message(chat_id=chat_id, text="Usage: \\model list OR \\model <model_id>", message_thread_id=thread_id)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="Usage: \\model list OR \\model <model_id>",
+                    message_thread_id=thread_id,
+                )
             return True
 
         return False
@@ -556,7 +635,9 @@ class TelegramBot:
 
         self._save_topic_cache()
         if created:
-            msg = f"✅ Created {len(created)} topics:\n" + "\n".join(f"• {a}" for a in created)
+            msg = f"✅ Created {len(created)} topics:\n" + "\n".join(
+                f"• {a}" for a in created
+            )
         else:
             msg = "✅ All agents already have topics"
         await context.bot.send_message(
@@ -588,7 +669,10 @@ class TelegramBot:
 
         # Route group forum messages to topic handler
         if update.effective_chat.type in ("group", "supergroup"):
-            if hasattr(update.message, "is_topic_message") and update.message.is_topic_message:
+            if (
+                hasattr(update.message, "is_topic_message")
+                and update.message.is_topic_message
+            ):
                 await self.handle_group_message(update, context)
                 return
             # General topic in forum groups (not marked as is_topic_message)
@@ -1464,8 +1548,16 @@ if __name__ == "__main__":
     PROMPT_TIMEOUT = config.getint("bot", "prompt_timeout", fallback=600)
 
     # Group configuration
-    GROUP_ID = config.getint("group", "group_id", fallback=None) if config.has_section("group") else None
-    TOPIC_CACHE = config.get("group", "topic_cache", fallback=None) if config.has_section("group") else None
+    GROUP_ID = (
+        config.getint("group", "group_id", fallback=None)
+        if config.has_section("group")
+        else None
+    )
+    TOPIC_CACHE = (
+        config.get("group", "topic_cache", fallback=None)
+        if config.has_section("group")
+        else None
+    )
 
     bot = TelegramBot(
         TOKEN,

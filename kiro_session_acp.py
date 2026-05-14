@@ -71,7 +71,12 @@ class KiroSessionACP:
     def set_model(self, model_id: str, chat_id: int, agent_name: str = None):
         """Set the model for an agent (async-safe)."""
         self.message_queue.put(
-            {"type": "set_model", "model_id": model_id, "chat_id": chat_id, "agent_name": agent_name}
+            {
+                "type": "set_model",
+                "model_id": model_id,
+                "chat_id": chat_id,
+                "agent_name": agent_name,
+            }
         )
 
     def set_mode(self, mode_id: str):
@@ -133,7 +138,9 @@ class KiroSessionACP:
         thread_id = msg.get("thread_id")
         target_agent = msg.get("agent_name") or self.active_agent
 
-        logger.info(f"Worker: Sending message: {text[:50]} (agent={target_agent}, thread={thread_id})")
+        logger.info(
+            f"Worker: Sending message: {text[:50]} (agent={target_agent}, thread={thread_id})"
+        )
 
         if not target_agent or target_agent not in self.agents:
             self._send_error(chat_id, "No active agent", thread_id=thread_id)
@@ -287,7 +294,9 @@ class KiroSessionACP:
                 if output_parts:
                     message = "\n".join(output_parts)
                     self._send_to_telegram_sync(
-                        agent_data["chat_id"], message, agent_name=current_agent_name,
+                        agent_data["chat_id"],
+                        message,
+                        agent_name=current_agent_name,
                         thread_id=agent_data.get("thread_id"),
                     )
 
@@ -305,7 +314,9 @@ class KiroSessionACP:
 
                 message = f"**File Content:**\n```\n{text_content}\n```"
                 self._send_to_telegram_sync(
-                    agent_data["chat_id"], message, agent_name=current_agent_name,
+                    agent_data["chat_id"],
+                    message,
+                    agent_name=current_agent_name,
                     thread_id=agent_data.get("thread_id"),
                 )
 
@@ -372,7 +383,12 @@ class KiroSessionACP:
                     thread_id=thread_id,
                 )
             else:
-                self._send_error(chat_id, error_str, agent_name=current_agent_name, thread_id=thread_id)
+                self._send_error(
+                    chat_id,
+                    error_str,
+                    agent_name=current_agent_name,
+                    thread_id=thread_id,
+                )
 
     def _handle_start_session(self, msg: Dict[str, Any]):
         """Handle start_session request in worker thread."""
@@ -547,7 +563,9 @@ class KiroSessionACP:
 
             if not msg.get("background"):
                 self.active_agent = agent_name
-            logger.info(f"Worker: Session started for {agent_name} (background={msg.get('background', False)})")
+            logger.info(
+                f"Worker: Session started for {agent_name} (background={msg.get('background', False)})"
+            )
 
         except Exception as e:
             logger.error(f"Worker: Error starting session: {e}")
@@ -637,9 +655,13 @@ class KiroSessionACP:
                     logger.error(f"Error flushing chunks: {e}")
                 chunks.clear()
 
-    def _typing_indicator_loop(self, chat_id: int, stop_event: threading.Event, thread_id: int = None):
+    def _typing_indicator_loop(
+        self, chat_id: int, stop_event: threading.Event, thread_id: int = None
+    ):
         """Background thread that refreshes typing indicator."""
-        logger.info(f"Worker: Typing indicator thread started for chat {chat_id} thread {thread_id}")
+        logger.info(
+            f"Worker: Typing indicator thread started for chat {chat_id} thread {thread_id}"
+        )
         while not stop_event.is_set():
             try:
                 # Send typing action via async bridge
@@ -730,7 +752,9 @@ class KiroSessionACP:
 
         return chunks
 
-    def _send_to_telegram_sync(self, chat_id: int, text: str, agent_name: str = None, thread_id: int = None):
+    def _send_to_telegram_sync(
+        self, chat_id: int, text: str, agent_name: str = None, thread_id: int = None
+    ):
         """Send message to Telegram from worker thread.
 
         If agent_name is provided, output is queued when that agent is not
@@ -738,7 +762,11 @@ class KiroSessionACP:
         """
         # Gate: queue output if agent is not active or output is suppressed
         # Skip gating for group messages (thread_id present) — they always send
-        if agent_name and not thread_id and (agent_name != self.active_agent or self.suppress_output):
+        if (
+            agent_name
+            and not thread_id
+            and (agent_name != self.active_agent or self.suppress_output)
+        ):
             agent_data = self.agents.get(agent_name)
             if agent_data is not None:
                 agent_data["pending_output"].append((chat_id, text))
@@ -777,7 +805,9 @@ class KiroSessionACP:
                         time.sleep(wait)
                         try:
                             future = asyncio.run_coroutine_threadsafe(
-                                self.send_to_telegram(chat_id, part, thread_id=thread_id),
+                                self.send_to_telegram(
+                                    chat_id, part, thread_id=thread_id
+                                ),
                                 self.send_to_telegram.loop,
                             )
                             future.result(timeout=10.0)
@@ -799,7 +829,9 @@ class KiroSessionACP:
                         _time.sleep(wait)
                         try:
                             future = asyncio.run_coroutine_threadsafe(
-                                self.send_to_telegram(chat_id, part, thread_id=thread_id),
+                                self.send_to_telegram(
+                                    chat_id, part, thread_id=thread_id
+                                ),
                                 self.send_to_telegram.loop,
                             )
                             future.result(timeout=30.0)
@@ -812,7 +844,9 @@ class KiroSessionACP:
                         _time.sleep(2)
                         try:
                             future = asyncio.run_coroutine_threadsafe(
-                                self.send_to_telegram(chat_id, part, thread_id=thread_id),
+                                self.send_to_telegram(
+                                    chat_id, part, thread_id=thread_id
+                                ),
                                 self.send_to_telegram.loop,
                             )
                             future.result(timeout=30.0)
@@ -873,7 +907,9 @@ class KiroSessionACP:
 
         return text
 
-    def _send_error(self, chat_id: int, error: str, agent_name: str = None, thread_id: int = None):
+    def _send_error(
+        self, chat_id: int, error: str, agent_name: str = None, thread_id: int = None
+    ):
         """Send error message to Telegram."""
         # Try to extract meaningful error from JSON-RPC error
         if "monthly usage limit has been reached" in error.lower():
@@ -893,7 +929,9 @@ class KiroSessionACP:
         else:
             user_message = f"❌ Error: {error}"
 
-        self._send_to_telegram_sync(chat_id, user_message, agent_name=agent_name, thread_id=thread_id)
+        self._send_to_telegram_sync(
+            chat_id, user_message, agent_name=agent_name, thread_id=thread_id
+        )
 
     # Public API (called from async layer)
 
@@ -956,7 +994,9 @@ class KiroSessionACP:
                     "default_directory", "/home/mark/git/remote-kiro"
                 )
 
-        logger.info(f"Starting background session for agent '{agent_name}' in: {working_dir}")
+        logger.info(
+            f"Starting background session for agent '{agent_name}' in: {working_dir}"
+        )
         self.message_queue.put(
             {
                 "type": "start_session",
@@ -972,10 +1012,18 @@ class KiroSessionACP:
             {"type": "send_message", "text": text, "chat_id": chat_id}
         )
 
-    def send_message_to_agent(self, agent_name: str, text: str, chat_id: int, thread_id: int = None):
+    def send_message_to_agent(
+        self, agent_name: str, text: str, chat_id: int, thread_id: int = None
+    ):
         """Send message to a specific agent (for group topic routing)."""
         self.message_queue.put(
-            {"type": "send_message", "text": text, "chat_id": chat_id, "agent_name": agent_name, "thread_id": thread_id}
+            {
+                "type": "send_message",
+                "text": text,
+                "chat_id": chat_id,
+                "agent_name": agent_name,
+                "thread_id": thread_id,
+            }
         )
 
     def cancel_operation(self, agent_name: str = None):
