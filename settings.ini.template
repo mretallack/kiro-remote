@@ -11,3 +11,11 @@ attachments_dir = ~/.kiro/bot_attachments
 chunk_timeout = 2.0
 # Interval in seconds between typing indicator refreshes (default: 4.0)
 typing_refresh_interval = 4.0
+# Timeout in seconds for Kiro prompt responses (default: 600)
+prompt_timeout = 600
+
+[group]
+# Optional: restrict to specific group ID (negative number for supergroups)
+# group_id = -1003610178913
+# Path to topic-agent mapping cache
+topic_cache = ~/.kiro/topic_agent_map.json

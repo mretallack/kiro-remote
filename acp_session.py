@@ -36,6 +36,7 @@ class ACPSession:
         self.compaction_status_callbacks = []
         self.mcp_event_callbacks = []
         self.metadata_callbacks = []
+        self.subagent_callbacks = []
 
         # Register notification handler
         self.client.on_notification(self._handle_notification)
@@ -50,12 +51,7 @@ class ACPSession:
             f"ACPSession: Received notification method={method}, sessionId={params.get('sessionId')}, my_session={self.session_id}, request_id={request_id}"
         )
 
-        # Only process notifications for this session
-        if params.get("sessionId") != self.session_id:
-            logger.debug(f"ACPSession: Ignoring notification for different session")
-            return
-
-        # Handle permission requests immediately
+        # Handle permission requests immediately (from any session, including subagents)
         if method == "session/request_permission":
             logger.info(f"ACPSession: Auto-approving permission request")
 
@@ -83,13 +79,43 @@ class ACPSession:
                         selected_option = opt.get("optionId")
                         break
 
-            if selected_option:
+            if selected_option and request_id:
                 tool_call_id = params.get("toolCall", {}).get("toolCallId")
+                logger.info(
+                    f"Responding to permission request id={request_id}: optionId={selected_option}"
+                )
                 self.client.respond_to_permission(
-                    request_id, self.session_id, tool_call_id, selected_option
+                    request_id,
+                    params.get("sessionId", self.session_id),
+                    tool_call_id,
+                    selected_option,
                 )
             else:
-                logger.error(f"No allow option found in permission request")
+                logger.warning(
+                    f"Could not auto-approve permission request: no suitable option found or no request_id"
+                )
+            return
+
+        # Only process notifications for this session (except global notifications)
+        global_methods = {
+            "_kiro.dev/subagent/list_update",
+            "_kiro.dev/session/inbox_notification",
+        }
+        if method not in global_methods and params.get("sessionId") != self.session_id:
+            # Allow tool_call updates through for known subagent sessions
+            if method == "session/update":
+                update = params.get("update", {})
+                update_type = update.get("sessionUpdate")
+                if update_type == "tool_call":
+                    for callback in self.subagent_callbacks:
+                        callback(
+                            {
+                                "_tool_call_update": True,
+                                "sessionId": params.get("sessionId"),
+                                "title": update.get("title", ""),
+                            }
+                        )
+            logger.debug(f"ACPSession: Ignoring notification for different session")
             return
 
         if method == "session/update":
@@ -108,6 +134,12 @@ class ACPSession:
             logger.debug(f"ACPSession: Metadata: {params}")
             for callback in self.metadata_callbacks:
                 callback(params)
+        elif method == "_kiro.dev/subagent/list_update":
+            logger.debug(f"ACPSession: Subagent list update")
+            for callback in self.subagent_callbacks:
+                callback(params)
+        elif method == "_kiro.dev/session/inbox_notification":
+            logger.debug(f"ACPSession: Inbox notification: {params}")
         elif method.startswith("_kiro.dev/"):
             # Unknown Kiro extension notification
             logger.info(f"ACPSession: Unknown Kiro notification: {method}")
@@ -240,6 +272,10 @@ class ACPSession:
     def on_metadata(self, callback: Callable[[Dict[str, Any]], None]) -> None:
         """Register callback for metadata notifications."""
         self.metadata_callbacks.append(callback)
+
+    def on_subagent_update(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        """Register callback for subagent list updates."""
+        self.subagent_callbacks.append(callback)
 
     def cancel(self) -> None:
         """Cancel the current operation."""

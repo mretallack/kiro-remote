@@ -74,6 +74,27 @@ def test_notification_ignored_for_different_session(session):
     assert len(received) == 0
 
 
+def test_permission_request_from_subagent_approved(session):
+    """Test that permission requests from subagent sessions are auto-approved."""
+    session._handle_notification(
+        {
+            "method": "session/request_permission",
+            "id": 99,
+            "params": {
+                "sessionId": "subagent-session-456",
+                "toolCall": {"toolCallId": "tc-sub"},
+                "options": [
+                    {"kind": "allow_once", "optionId": "opt-sub-1"},
+                ],
+            },
+        }
+    )
+
+    session.client.respond_to_permission.assert_called_once_with(
+        99, "subagent-session-456", "tc-sub", "opt-sub-1"
+    )
+
+
 def test_permission_request_auto_approved(session):
     """Test that permission requests are auto-approved with allow_once."""
     session._handle_notification(

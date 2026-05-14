@@ -182,7 +182,58 @@ This gives each agent the right context automatically. If no matching mode exist
 - **Role Specialization**: Agents with different instructions for specific tasks
 - **Context Management**: Keep separate conversation contexts for different projects
 
+## Group Topics
 
+Use a Telegram group with forum topics enabled to interact with multiple agents simultaneously — each topic maps to one agent.
+
+### Setup
+
+1. Create a Telegram group and enable "Topics" in group settings
+2. Add the bot to the group and make it admin (needs `can_manage_topics` permission)
+3. Create topics named after your agents (case-insensitive matching)
+4. Or use `\topic sync` in any topic to auto-create topics for all agents
+
+### Configuration
+
+Add to `settings.ini`:
+```ini
+[group]
+# Optional: restrict to specific group ID
+# group_id = -1003610178913
+# Path to topic-agent mapping cache
+topic_cache = ~/.kiro/topic_agent_map.json
+```
+
+### Topic Commands
+
+These commands work within group topics and are scoped to the topic's agent:
+
+```
+\topic register <agent>  # Manually map this topic to an agent
+\topic sync              # Create topics for all agents that don't have one
+\cancel                  # Cancel the topic's agent operation
+\context                 # Show context usage for the topic's agent
+\compact                 # Compact the topic's agent conversation
+\model list              # List models for the topic's agent
+\model <model_id>        # Set model for the topic's agent
+\agent list              # List all agents (works in any topic)
+```
+
+### How It Works
+
+1. **Topic Name Matching**: Topic names are matched case-insensitively to agent names
+2. **Automatic Caching**: Once resolved, topic-to-agent mappings are cached persistently
+3. **Background Sessions**: Agents started from topics don't change the active DM agent
+4. **Lifecycle Events**: Topic creation/rename automatically updates the cache
+5. **Attachments**: Photos and documents sent in topics route to the correct agent
+
+### Naming Convention
+
+Topic names should match agent names. For example:
+- Topic "facebook_dev" → agent `facebook_dev`
+- Topic "Kiro Default" → agent `kiro_default` (case-insensitive, spaces/underscores normalized)
+
+If automatic matching fails, use `\topic register <agent>` to manually map a topic.
 
 ## Agent File Structure
 
@@ -290,27 +341,27 @@ sudo journalctl -u telegram-kiro-bot -f
 
 ### Error Handling
 
-- **Message too long splitting**
+- ✅ **Message too long splitting**
   - Problem: Kiro sometimes returns responses that exceed Telegram's 4096 character message limit, causing the message to fail to send entirely.
   - Found: `telegram.error.BadRequest: Message is too long` in journal logs (Apr 12 18:20).
   - Solution: Detect message length before sending and split into multiple sequential messages, preserving markdown formatting across chunks.
 
-- **Prompt timeout handling**
+- ✅ **Prompt timeout handling**
   - Problem: Long-running Kiro tasks (e.g. complex code generation, docker builds) exceed the prompt timeout, causing the request to fail and the user to get no response.
   - Found: `Exception: Timeout waiting for response to session/prompt` — ~20 occurrences across Apr 11–12, the most frequent error in the logs.
   - Solution: Make the prompt timeout configurable in `settings.ini`. Consider increasing the default, and send the user a notification when a timeout occurs rather than silently failing.
 
-- **Prompt already in progress guard**
+- ✅ **Prompt already in progress guard**
   - Problem: When a prompt times out, the user retries, but the original prompt is still running server-side. The retry hits `Prompt already in progress` and also fails.
   - Found: `Exception: JSON-RPC error: {'code': -32603, 'message': 'Internal error', 'data': 'Prompt already in progress'}` — ~10 occurrences, always following a timeout.
   - Solution: Track prompt state and prevent sending a new prompt while one is in-flight. Queue incoming messages and notify the user that a previous request is still processing. Optionally cancel the in-flight prompt before retrying.
 
-- **Monthly usage limit handling**
+- ✅ **Monthly usage limit handling**
   - Problem: When the Kiro monthly usage limit is reached, every prompt fails with an unhandled exception. The bot keeps trying and failing on each user message.
   - Found: `Exception: JSON-RPC error: ... 'The monthly usage limit has been reached'` — 4 occurrences in quick succession (Apr 12 17:44–17:49) before the service was restarted.
   - Solution: Detect this specific error, notify the user with a friendly message ("Monthly usage limit reached — try again next month or check your plan"), and suppress further prompt attempts until the session is restarted or a configurable cooldown expires.
 
-- **Transient network error recovery**
+- ✅ **Transient network error recovery**
   - Problem: Occasional Telegram API connectivity issues cause unhandled exceptions that get logged but aren't recovered from gracefully.
   - Found: `telegram.error.NetworkError: httpx.ReadError:` (5 occurrences) and `telegram.error.NetworkError: Bad Gateway` (1 occurrence, Apr 12 02:10) in journal logs.
   - Solution: Add retry logic with exponential backoff for Telegram API calls. The python-telegram-bot library may already handle some retries — verify and configure appropriately. Register an error handler via `application.add_error_handler()` to catch and log these instead of letting them propagate unhandled.
@@ -329,10 +380,21 @@ sudo journalctl -u telegram-kiro-bot -f
 - **Prompt timeout investigation**: Review how chunk_timeout works — does it reset on each chunk received, or is it measured from send to end? Document and potentially make configurable
 - **Typing indicator on agent swap**: Verify typing status is correctly updated when switching between agents — may not clear/set properly
 - **Agent monitoring mode**: `\agent` with no subcommand enters monitoring mode — watches all running agents and notifies the user when any agent finishes (e.g., "✅ facebook_dev is finished and awaiting next instruction")
-- **Agent list copy-to-clipboard**: Format agent names in `\agent list` so they are tappable/copyable in Telegram (e.g., using inline code formatting or copy buttons)
+- ✅ **Agent list copy-to-clipboard**: Format agent names in `\agent list` so they are tappable/copyable in Telegram (using inline code formatting)
 
 ### User Experience
 - **Configurable chunk timeout**: Per-user or per-agent timeout settings
 - **Typing indicator customization**: Option to disable or adjust refresh rate
 - **Tool output filtering**: Option to hide/show specific tool outputs
 - **Message formatting options**: Markdown vs HTML, code highlighting preferences
+
+### ACP Notifications (Unhandled)
+- **Inbox notifications** (`_kiro.dev/session/inbox_notification`): Shows when subagent results are delivered to the main agent (`messageCount`, `senders`). Could display "📬 Subagent results received (3)" so the user knows the main agent is processing subagent output.
+- **Tool call chunks** (`_kiro.dev/session/update` → `tool_call_chunk`): Streaming tool output from subagents (file contents, command output as it runs). Very noisy (~50/min during active subagent work). Could optionally show live subagent output, but would flood the chat without filtering/summarisation.
+- **Commands available** (`_kiro.dev/commands/available`): Full list of slash commands with descriptions, sent after session creation. Could validate commands in `\help`, provide autocomplete suggestions, or detect typos in user commands.
+
+### ACP Features (Not Yet Implemented)
+- **`/chat new`**: Start fresh conversation without restarting the kiro-cli process. Would avoid the full session restart overhead.
+- **`/spawn`**: Explicitly kick off parallel agent sessions from Telegram. Fire-and-forget background tasks with completion notifications.
+- **`/transcript`**: Review conversation history. Could be exposed as a `\transcript` bot command.
+- **`_session/terminate`**: ✅ Implemented as `\subagents kill <name>`

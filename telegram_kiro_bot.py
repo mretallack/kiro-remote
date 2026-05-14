@@ -49,6 +49,9 @@ class TelegramBot:
         attachments_dir=None,
         chunk_timeout=2.0,
         typing_refresh_interval=4.0,
+        prompt_timeout=600,
+        group_id=None,
+        topic_cache_path=None,
     ):
         self.token = token
         self.authorized_user = authorized_user
@@ -61,16 +64,31 @@ class TelegramBot:
         # Configure timeouts
         self.kiro.chunk_timeout = chunk_timeout
         self.kiro.typing_refresh_interval = typing_refresh_interval
+        self.kiro.prompt_timeout = prompt_timeout
+
+        # Group topic configuration
+        self.group_id = group_id
+        self._topic_cache_path = Path(
+            topic_cache_path or "~/.kiro/topic_agent_map.json"
+        ).expanduser()
+        self._topic_agent_cache = {}  # thread_id (int) -> agent_name (str)
+        self._load_topic_cache()
+
+        # Configure timeouts
+        self.kiro.chunk_timeout = chunk_timeout
+        self.kiro.typing_refresh_interval = typing_refresh_interval
+        self.kiro.prompt_timeout = prompt_timeout
 
         # Build application
         self.application = Application.builder().token(token).build()
         self.loop = None
 
         # Set up async callback for Kiro to send messages back
-        async def send_to_telegram(chat_id, text):
-            await self.application.bot.send_message(
-                chat_id=chat_id, text=text, parse_mode="HTML"
-            )
+        async def send_to_telegram(chat_id, text, thread_id=None):
+            kwargs = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+            if thread_id:
+                kwargs["message_thread_id"] = thread_id
+            await self.application.bot.send_message(**kwargs)
 
         self.kiro.send_to_telegram = send_to_telegram
         self.kiro.application = self.application
@@ -95,6 +113,33 @@ class TelegramBot:
             MessageHandler(filters.Document.ALL, self.handle_document)
         )
 
+        # Forum topic lifecycle handlers
+        self.application.add_handler(
+            MessageHandler(
+                filters.StatusUpdate.FORUM_TOPIC_CREATED,
+                self.handle_forum_topic_created,
+            )
+        )
+        self.application.add_handler(
+            MessageHandler(
+                filters.StatusUpdate.FORUM_TOPIC_EDITED, self.handle_forum_topic_edited
+            )
+        )
+
+        # Global error handler for transient network errors (Fix 5)
+        self.application.add_error_handler(self._error_handler)
+
+    @staticmethod
+    async def _error_handler(update, context):
+        """Handle errors from python-telegram-bot, suppressing transient network issues."""
+        import telegram.error
+
+        error = context.error
+        if isinstance(error, telegram.error.NetworkError):
+            logger.warning(f"Transient network error (suppressed): {error}")
+        else:
+            logger.error(f"Unhandled error: {error}", exc_info=context.error)
+
     def _setup_attachments_dir(self):
         """Create attachments directory if it doesn't exist"""
         try:
@@ -103,6 +148,49 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Failed to create attachments directory: {e}")
             raise
+
+    def _load_topic_cache(self):
+        """Load topic-agent mapping from disk."""
+        if self._topic_cache_path.exists():
+            try:
+                with open(self._topic_cache_path, "r") as f:
+                    data = json.load(f)
+                # Keys are stored as strings in JSON, convert to int
+                self._topic_agent_cache = {int(k): v for k, v in data.items()}
+                logger.info(
+                    f"Loaded topic cache: {len(self._topic_agent_cache)} entries"
+                )
+            except Exception as e:
+                logger.error(f"Failed to load topic cache: {e}")
+                self._topic_agent_cache = {}
+
+    def _save_topic_cache(self):
+        """Persist topic-agent mapping to disk."""
+        try:
+            self._topic_cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._topic_cache_path, "w") as f:
+                json.dump(
+                    {str(k): v for k, v in self._topic_agent_cache.items()}, f, indent=2
+                )
+            logger.info(f"Saved topic cache: {len(self._topic_agent_cache)} entries")
+        except Exception as e:
+            logger.error(f"Failed to save topic cache: {e}")
+
+    def _get_available_agent_names(self):
+        """Get all available agent names (built-in + custom)."""
+        agents = ["kiro_default"]
+        agents_dir = Path.home() / ".kiro" / "agents"
+        if agents_dir.exists():
+            for f in agents_dir.glob("*.json"):
+                agents.append(f.stem)
+        return sorted(set(agents))
+
+    def _match_agent_name(self, topic_name):
+        """Case-insensitive match of topic name to agent name (spaces normalized to underscores)."""
+        available = self._get_available_agent_names()
+        lower_map = {a.lower(): a for a in available}
+        normalized = topic_name.lower().replace(" ", "_")
+        return lower_map.get(normalized)
 
     def _sanitize_filename(self, filename):
         """Remove dangerous characters from filename"""
@@ -148,13 +236,32 @@ class TelegramBot:
             message = self._format_attachment_message(caption, str(file_path))
             message = message.replace("\n", "\\n")
 
-            # Send to Kiro CLI using existing message handling
             chat_id = update.effective_chat.id
+            thread_id = getattr(update.message, "message_thread_id", None)
+
+            # Group topic routing
+            if update.effective_chat.type in ("group", "supergroup") and thread_id:
+                agent_name = await self._resolve_topic_agent(update, context, thread_id)
+                if agent_name:
+                    if agent_name not in self.kiro.agents:
+                        self.kiro.start_agent_background(agent_name=agent_name)
+                        import asyncio
+
+                        await asyncio.sleep(2)
+                    await context.bot.send_chat_action(
+                        chat_id=chat_id,
+                        action=ChatAction.TYPING,
+                        message_thread_id=thread_id,
+                    )
+                    self.kiro.send_message_to_agent(
+                        agent_name, message, chat_id, thread_id
+                    )
+                return
+
+            # 1-to-1 chat
             self.kiro.set_chat_id(chat_id)
             self.kiro.last_typing_indicator = 0
             self.kiro.send_to_kiro(message)
-
-            # Show typing indicator
             await update.effective_chat.send_action(ChatAction.TYPING)
 
         except Exception as e:
@@ -184,18 +291,358 @@ class TelegramBot:
             message = self._format_attachment_message(caption, str(file_path))
             message = message.replace("\n", "\\n")
 
-            # Send to Kiro CLI using existing message handling
             chat_id = update.effective_chat.id
+            thread_id = getattr(update.message, "message_thread_id", None)
+
+            # Group topic routing
+            if update.effective_chat.type in ("group", "supergroup") and thread_id:
+                agent_name = await self._resolve_topic_agent(update, context, thread_id)
+                if agent_name:
+                    if agent_name not in self.kiro.agents:
+                        self.kiro.start_agent_background(agent_name=agent_name)
+                        import asyncio
+
+                        await asyncio.sleep(2)
+                    await context.bot.send_chat_action(
+                        chat_id=chat_id,
+                        action=ChatAction.TYPING,
+                        message_thread_id=thread_id,
+                    )
+                    self.kiro.send_message_to_agent(
+                        agent_name, message, chat_id, thread_id
+                    )
+                return
+
+            # 1-to-1 chat
             self.kiro.set_chat_id(chat_id)
             self.kiro.last_typing_indicator = 0
             self.kiro.send_to_kiro(message)
-
-            # Show typing indicator
             await update.effective_chat.send_action(ChatAction.TYPING)
 
         except Exception as e:
             logger.error(f"Error handling document: {e}")
             await update.message.reply_text(f"❌ Failed to process document: {e}")
+
+    async def handle_group_message(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        thread_id_override: int = None,
+    ):
+        """Handle message in a group forum topic."""
+        thread_id = (
+            thread_id_override
+            if thread_id_override is not None
+            else update.message.message_thread_id
+        )
+        if thread_id is None:
+            return  # General topic or non-forum message
+
+        chat_id = update.effective_chat.id
+        message_text = update.message.text
+
+        # Check for intercepted commands first
+        if message_text and await self.handle_intercepted_commands_group(
+            update, context, thread_id
+        ):
+            return
+
+        # Resolve topic to agent
+        agent_name = await self._resolve_topic_agent(update, context, thread_id)
+        if not agent_name:
+            return
+
+        # Ensure agent session is running
+        if agent_name not in self.kiro.agents:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"🔄 Starting agent `{agent_name}`...",
+                message_thread_id=thread_id,
+                parse_mode="HTML",
+            )
+            self.kiro.start_agent_background(agent_name=agent_name)
+            # Give it time to start
+            import asyncio
+
+            await asyncio.sleep(2)
+
+        # Send typing indicator
+        await context.bot.send_chat_action(
+            chat_id=chat_id, action=ChatAction.TYPING, message_thread_id=thread_id
+        )
+
+        # Route message to agent
+        text = message_text.replace("\n", "\\n") if message_text else ""
+        self.kiro.send_message_to_agent(agent_name, text, chat_id, thread_id)
+
+    async def _resolve_topic_agent(self, update, context, thread_id):
+        """Resolve a topic's thread_id to an agent name."""
+        chat_id = update.effective_chat.id
+
+        # Check cache first
+        if thread_id in self._topic_agent_cache:
+            return self._topic_agent_cache[thread_id]
+
+        # Try to get topic name from the message's reply_to_message (forum_topic_created)
+        topic_name = None
+        if (
+            update.message.reply_to_message
+            and update.message.reply_to_message.forum_topic_created
+        ):
+            topic_name = update.message.reply_to_message.forum_topic_created.name
+
+        if not topic_name:
+            # Fallback: try getForumTopicIconSticker or ask user to register
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="❓ Can't determine topic name. Use `\\topic register <agent>` in this topic to map it.",
+                message_thread_id=thread_id,
+                parse_mode="HTML",
+            )
+            return None
+
+        # Match to agent
+        agent_name = self._match_agent_name(topic_name)
+        if not agent_name:
+            agents = self._get_available_agent_names()
+            agents_list = "\n".join(f"• <code>{a}</code>" for a in agents)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ No agent matches topic '<b>{topic_name}</b>'\n\nAvailable agents:\n{agents_list}",
+                message_thread_id=thread_id,
+                parse_mode="HTML",
+            )
+            return None
+
+        # Cache it
+        self._topic_agent_cache[thread_id] = agent_name
+        self._save_topic_cache()
+        logger.info(f"Cached topic {thread_id} -> agent {agent_name}")
+        return agent_name
+
+    async def handle_forum_topic_created(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
+        """Handle forum topic creation — auto-populate cache if name matches an agent."""
+        if update.effective_user.username != self.authorized_user:
+            return
+        topic = update.message.forum_topic_created
+        if not topic:
+            return
+        thread_id = update.message.message_thread_id
+        agent_name = self._match_agent_name(topic.name)
+        if agent_name:
+            self._topic_agent_cache[thread_id] = agent_name
+            self._save_topic_cache()
+            logger.info(f"Auto-cached new topic {thread_id} -> {agent_name}")
+
+    async def handle_forum_topic_edited(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ):
+        """Handle forum topic rename — update or invalidate cache."""
+        if update.effective_user.username != self.authorized_user:
+            return
+        edited = update.message.forum_topic_edited
+        if not edited:
+            return
+        thread_id = update.message.message_thread_id
+        new_name = getattr(edited, "name", None)
+        if new_name:
+            agent_name = self._match_agent_name(new_name)
+            if agent_name:
+                self._topic_agent_cache[thread_id] = agent_name
+                self._save_topic_cache()
+                logger.info(f"Updated topic cache {thread_id} -> {agent_name}")
+            elif thread_id in self._topic_agent_cache:
+                del self._topic_agent_cache[thread_id]
+                self._save_topic_cache()
+                logger.info(
+                    f"Invalidated topic cache for {thread_id} (renamed to '{new_name}')"
+                )
+
+    async def handle_intercepted_commands_group(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, thread_id: int
+    ) -> bool:
+        """Handle bot commands in group topics. Returns True if intercepted."""
+        message_text = update.message.text.strip()
+        normalized = message_text.replace("\\", "/")
+        chat_id = update.effective_chat.id
+
+        # Topic management commands
+        if normalized.startswith("/topic"):
+            parts = normalized.split()
+            if len(parts) >= 2:
+                if parts[1] == "register" and len(parts) >= 3:
+                    agent_name = parts[2]
+                    matched = self._match_agent_name(agent_name)
+                    if matched:
+                        self._topic_agent_cache[thread_id] = matched
+                        self._save_topic_cache()
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"✅ Topic registered to agent `{matched}`",
+                            message_thread_id=thread_id,
+                            parse_mode="HTML",
+                        )
+                    else:
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text=f"❌ No agent named '{agent_name}'",
+                            message_thread_id=thread_id,
+                        )
+                    return True
+                elif parts[1] == "sync":
+                    await self._sync_topics(update, context)
+                    return True
+            return True
+
+        # Cancel - scoped to this topic's agent
+        if normalized == "/cancel":
+            agent_name = self._topic_agent_cache.get(thread_id)
+            if agent_name:
+                self.kiro.cancel_operation(agent_name=agent_name)
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"🛑 Cancelling operation for `{agent_name}`...",
+                    message_thread_id=thread_id,
+                    parse_mode="HTML",
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="🛑 No agent mapped to this topic",
+                    message_thread_id=thread_id,
+                )
+            return True
+
+        # Context - scoped to topic's agent
+        if normalized == "/context":
+            agent_name = self._topic_agent_cache.get(thread_id)
+            if agent_name and agent_name in self.kiro.agents:
+                agent_data = self.kiro.agents[agent_name]
+                session_id = agent_data["session_id"]
+                usage = self.kiro.context_tracker.get_usage(session_id)
+                text = (
+                    f"📊 Context usage ({agent_name}): {usage:.1f}%"
+                    if usage
+                    else f"📊 Context usage ({agent_name}): Unknown"
+                )
+                await context.bot.send_message(
+                    chat_id=chat_id, text=text, message_thread_id=thread_id
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="❌ No active agent for this topic",
+                    message_thread_id=thread_id,
+                )
+            return True
+
+        # Compact - scoped to topic's agent
+        if normalized == "/compact":
+            agent_name = self._topic_agent_cache.get(thread_id)
+            if agent_name and agent_name in self.kiro.agents:
+                self.kiro.send_message_to_agent(
+                    agent_name, "/compact", chat_id, thread_id
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="❌ No active agent for this topic",
+                    message_thread_id=thread_id,
+                )
+            return True
+
+        # Agent list
+        if normalized == "/agent list":
+            await self.list_agents(update, context)
+            return True
+
+        # Model commands scoped to topic's agent
+        if normalized.startswith("/model"):
+            agent_name = self._topic_agent_cache.get(thread_id)
+            parts = normalized.split(maxsplit=1)
+            if len(parts) >= 2:
+                if parts[1] == "list":
+                    if agent_name and agent_name in self.kiro.agents:
+                        models_info = self.kiro.get_available_models(agent_name)
+                        if models_info:
+                            current_model = models_info.get("currentModelId", "unknown")
+                            available_models = models_info.get("availableModels", [])
+                            response = f"<b>Model ({agent_name}):</b> <code>{current_model}</code>\n\n<b>Available:</b>\n"
+                            for model in available_models:
+                                mid = model.get("modelId", "unknown")
+                                desc = model.get("description", "")
+                                marker = "→ " if mid == current_model else "  "
+                                response += f"{marker}<code>{mid}</code> - {desc}\n"
+                            await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=response,
+                                message_thread_id=thread_id,
+                                parse_mode="HTML",
+                            )
+                        else:
+                            await context.bot.send_message(
+                                chat_id=chat_id,
+                                text="❌ No model info available",
+                                message_thread_id=thread_id,
+                            )
+                    else:
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text="❌ No active agent for this topic",
+                            message_thread_id=thread_id,
+                        )
+                else:
+                    model_id = parts[1]
+                    if agent_name and agent_name in self.kiro.agents:
+                        self.kiro.set_model(model_id, chat_id, agent_name=agent_name)
+                    else:
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text="❌ No active agent for this topic",
+                            message_thread_id=thread_id,
+                        )
+            else:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="Usage: \\model list OR \\model <model_id>",
+                    message_thread_id=thread_id,
+                )
+            return True
+
+        return False
+
+    async def _sync_topics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Create forum topics for all agents that don't already have one."""
+        chat_id = update.effective_chat.id
+        thread_id = update.message.message_thread_id
+
+        agents = self._get_available_agent_names()
+        cached_agents = set(self._topic_agent_cache.values())
+
+        created = []
+        for agent in agents:
+            if agent not in cached_agents:
+                try:
+                    result = await context.bot.create_forum_topic(
+                        chat_id=chat_id, name=agent
+                    )
+                    self._topic_agent_cache[result.message_thread_id] = agent
+                    created.append(agent)
+                except Exception as e:
+                    logger.warning(f"Failed to create topic for '{agent}': {e}")
+
+        self._save_topic_cache()
+        if created:
+            msg = f"✅ Created {len(created)} topics:\n" + "\n".join(
+                f"• {a}" for a in created
+            )
+        else:
+            msg = "✅ All agents already have topics"
+        await context.bot.send_message(
+            chat_id=chat_id, text=msg, message_thread_id=thread_id
+        )
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming messages"""
@@ -219,6 +666,22 @@ class TelegramBot:
             return
 
         message_text = update.message.text
+
+        # Route group forum messages to topic handler
+        if update.effective_chat.type in ("group", "supergroup"):
+            if (
+                hasattr(update.message, "is_topic_message")
+                and update.message.is_topic_message
+            ):
+                await self.handle_group_message(update, context)
+                return
+            # General topic in forum groups (not marked as is_topic_message)
+            if getattr(update.effective_chat, "is_forum", False):
+                # Treat as General — route to group handler with no thread_id
+                await self.handle_group_message(update, context, thread_id_override=0)
+                return
+            # Non-forum group message, ignore
+            return
 
         # Check if user is in a conversation state
         if chat_id in self.user_states:
@@ -274,6 +737,18 @@ class TelegramBot:
             print(f"[DEBUG] Intercepted cancel command")
             self.kiro.cancel_operation()
             await update.message.reply_text("🛑 Cancelling operation...")
+            return True
+
+        # Subagents command
+        if normalized_text == "/subagents":
+            print(f"[DEBUG] Intercepted subagents command")
+            await self.show_subagents(update, context)
+            return True
+        if normalized_text.startswith("/subagents kill "):
+            name = normalized_text[len("/subagents kill ") :].strip()
+            if name:
+                result = self.kiro.terminate_subagent(name)
+                await update.message.reply_text(result)
             return True
 
         # Model commands
@@ -452,23 +927,25 @@ class TelegramBot:
             print(f"[DEBUG] Custom agents: {custom_agents}")
             print(f"[DEBUG] Active agent: {self.kiro.active_agent}")
 
-            # Format response (simplified, no markdown)
+            # Format response with HTML for tappable agent names
             pending_agents = set(self.kiro.agents_with_pending_output())
-            response = "Available agents:\n\n"
-            response += "Built-in agents:\n"
+            response = "<b>Available agents:</b>\n\n"
+            response += "<b>Built-in agents:</b>\n"
             for agent in builtin_agents:
-                current_marker = " <- active" if agent == self.kiro.active_agent else ""
+                current_marker = " ← active" if agent == self.kiro.active_agent else ""
                 pending_marker = " *" if agent in pending_agents else ""
-                response += f"• {agent}{current_marker}{pending_marker}\n"
+                response += f"• <code>{agent}</code>{current_marker}{pending_marker}\n"
 
             if custom_agents:
-                response += "\nCustom agents:\n"
+                response += "\n<b>Custom agents:</b>\n"
                 for agent in sorted(custom_agents):
                     current_marker = (
-                        " <- active" if agent == self.kiro.active_agent else ""
+                        " ← active" if agent == self.kiro.active_agent else ""
                     )
                     pending_marker = " *" if agent in pending_agents else ""
-                    response += f"• {agent}{current_marker}{pending_marker}\n"
+                    response += (
+                        f"• <code>{agent}</code>{current_marker}{pending_marker}\n"
+                    )
 
             if pending_agents:
                 response += "\n* = has pending output"
@@ -476,7 +953,7 @@ class TelegramBot:
             print(f"[DEBUG] Final response length: {len(response)}")
             print(f"[DEBUG] Final response: '{response}'")
             print(f"[DEBUG] About to send reply_text")
-            await update.message.reply_text(response)
+            await update.message.reply_text(response, parse_mode="HTML")
             print(f"[DEBUG] Reply sent successfully")
         except Exception as e:
             print(f"[DEBUG] Error in list_agents: {e}")
@@ -485,6 +962,25 @@ class TelegramBot:
 
             print(f"[DEBUG] Traceback: {traceback.format_exc()}")
             await update.message.reply_text(f"Error: {e}")
+
+    async def show_subagents(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show active subagents for the current agent."""
+        if update.effective_user.username != self.authorized_user:
+            return
+
+        subagents = self.kiro.get_subagents()
+        if not subagents:
+            await update.message.reply_text("No active subagents")
+            return
+
+        response = f"<b>Active subagents</b> ({len(subagents)}):\n\n"
+        for sid, info in subagents.items():
+            response += f"🔀 <code>{info['name']}</code>\n"
+            if info.get("last_tool"):
+                response += f"   🔧 {info['last_tool']}\n"
+            elif info.get("query"):
+                response += f"   {info['query']}\n"
+        await update.message.reply_text(response, parse_mode="HTML")
 
     async def show_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show all available bot commands"""
@@ -513,6 +1009,8 @@ Model Management
 
 Operation Control
 \\cancel - Cancel current operation
+\\subagents - Show active subagents
+\\subagents kill <name> - Terminate a subagent
 
 Help
 \\help - Show this help message
@@ -820,6 +1318,7 @@ Help
                 "file://~/.kiro/steering/**/*.md",
                 f"file://~/.kiro/agents/{name}/steering/*.md",
                 f"file://~/git/{name}/.kiro/steering/**/*.md",
+                "skill://~/.kiro/skills/**/SKILL.md",
             ],
             "hooks": {},
             "toolsSettings": {},
@@ -1030,7 +1529,7 @@ Help
     def run(self):
         """Start the bot"""
         print("Telegram Kiro Bot started...")
-        self.application.run_polling()
+        self.application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
@@ -1046,8 +1545,28 @@ if __name__ == "__main__":
     TYPING_REFRESH_INTERVAL = config.getfloat(
         "bot", "typing_refresh_interval", fallback=4.0
     )
+    PROMPT_TIMEOUT = config.getint("bot", "prompt_timeout", fallback=600)
+
+    # Group configuration
+    GROUP_ID = (
+        config.getint("group", "group_id", fallback=None)
+        if config.has_section("group")
+        else None
+    )
+    TOPIC_CACHE = (
+        config.get("group", "topic_cache", fallback=None)
+        if config.has_section("group")
+        else None
+    )
 
     bot = TelegramBot(
-        TOKEN, AUTHORIZED_USER, ATTACHMENTS_DIR, CHUNK_TIMEOUT, TYPING_REFRESH_INTERVAL
+        TOKEN,
+        AUTHORIZED_USER,
+        ATTACHMENTS_DIR,
+        CHUNK_TIMEOUT,
+        TYPING_REFRESH_INTERVAL,
+        PROMPT_TIMEOUT,
+        group_id=GROUP_ID,
+        topic_cache_path=TOPIC_CACHE,
     )
     bot.run()
