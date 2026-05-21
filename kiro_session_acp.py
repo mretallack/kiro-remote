@@ -275,6 +275,17 @@ class KiroSessionACP:
                 if not stdout and not stderr:
                     return
 
+                # Intercept SEND_FILE: pattern for Kiro-initiated file sending
+                send_file_match = re.match(r"^SEND_FILE:(.+)$", stdout)
+                if send_file_match:
+                    file_path = send_file_match.group(1).strip()
+                    self._send_file_to_telegram_sync(
+                        agent_data["chat_id"],
+                        file_path,
+                        thread_id=agent_data.get("thread_id"),
+                    )
+                    return
+
                 # Truncate if too long (first 1000 + last 1000 bytes)
                 def truncate_output(text, max_bytes=1000):
                     if len(text) <= max_bytes * 2:
@@ -859,6 +870,45 @@ class KiroSessionACP:
                         traceback.print_exc()
         else:
             logger.warning(f"No send_to_telegram callback set")
+
+    def _send_file_to_telegram_sync(
+        self, chat_id: int, file_path: str, thread_id: int = None
+    ):
+        """Send a file to Telegram from worker thread."""
+        path = Path(file_path).expanduser()
+        if not path.is_file():
+            self._send_to_telegram_sync(
+                chat_id, f"❌ File not found: {file_path}", thread_id=thread_id
+            )
+            return
+
+        if path.stat().st_size > 50 * 1024 * 1024:
+            self._send_to_telegram_sync(
+                chat_id, "❌ File too large (>50MB)", thread_id=thread_id
+            )
+            return
+
+        async def _send_doc():
+            kwargs = {
+                "chat_id": chat_id,
+                "document": open(path, "rb"),
+                "filename": path.name,
+            }
+            if thread_id:
+                kwargs["message_thread_id"] = thread_id
+            await self.application.bot.send_document(**kwargs)
+
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                _send_doc(), self.send_to_telegram.loop
+            )
+            future.result(timeout=30.0)
+            logger.info(f"Worker: Sent file {path.name} to Telegram")
+        except Exception as e:
+            logger.error(f"Error sending file {file_path}: {e}")
+            self._send_to_telegram_sync(
+                chat_id, f"❌ Failed to send file: {e}", thread_id=thread_id
+            )
 
     def _markdown_to_html(self, text: str) -> str:
         """Convert markdown formatting to HTML for Telegram."""

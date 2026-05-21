@@ -556,6 +556,12 @@ class TelegramBot:
             await self.list_agents(update, context)
             return True
 
+        # Send file command
+        if normalized.startswith("/send "):
+            file_path = message_text.split(maxsplit=1)[1].strip()
+            await self.send_file(update, context, file_path)
+            return True
+
         # Model commands scoped to topic's agent
         if normalized.startswith("/model"):
             agent_name = self._topic_agent_cache.get(thread_id)
@@ -861,6 +867,12 @@ class TelegramBot:
             print(f"[DEBUG] Intercepted compact command")
             # Send as regular message, not as command
             self.kiro.send_message("/compact", update.effective_chat.id)
+            return True
+
+        # Send file command
+        elif normalized_text.startswith("/send "):
+            file_path = message_text.split(maxsplit=1)[1].strip()
+            await self.send_file(update, context, file_path)
             return True
 
         return False
@@ -1500,6 +1512,35 @@ Help
         except Exception as e:
             logger.error(f"Error triggering compaction: {e}")
             await update.message.reply_text(f"❌ Compaction failed: {str(e)}")
+
+    async def send_file(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, file_path: str
+    ):
+        """Send a file to the user via Telegram."""
+        path = Path(file_path).expanduser()
+        if not path.is_file():
+            await update.message.reply_text(f"❌ File not found: {file_path}")
+            return
+
+        # Telegram limit is 50MB for bots
+        size = path.stat().st_size
+        if size > 50 * 1024 * 1024:
+            await update.message.reply_text(
+                f"❌ File too large ({size // (1024*1024)}MB). Telegram limit is 50MB."
+            )
+            return
+
+        try:
+            with open(path, "rb") as f:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=f,
+                    filename=path.name,
+                    message_thread_id=update.message.message_thread_id,
+                )
+        except Exception as e:
+            logger.error(f"Error sending file {file_path}: {e}")
+            await update.message.reply_text(f"❌ Failed to send file: {e}")
 
     async def _send_typing_async(self, chat_id):
         """Internal async method to send typing indicator"""

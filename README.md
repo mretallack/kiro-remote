@@ -263,6 +263,60 @@ Conversation states are stored in `~/.kiro/bot_conversations/`:
 
 Sessions are automatically persisted by kiro-cli to `~/.kiro/sessions/cli/`.
 
+## Send File Skill
+
+Kiro can send files directly to you in Telegram. This works two ways:
+
+1. **Via `\send` command**: Type `\send /path/to/file` in chat
+2. **Via Kiro skill**: Kiro autonomously sends files when you ask (e.g., "send me that report")
+
+### Skill Setup
+
+The send-file skill is not included in git — create it manually:
+
+```bash
+mkdir -p ~/.kiro/skills/send-file
+cat > ~/.kiro/skills/send-file/SKILL.md << 'EOF'
+---
+name: send-file
+description: Send a file to the user via Telegram. Use when you need to deliver a generated file, export, or any file to the user.
+---
+
+# Send File to User
+
+Send a file to the user via Telegram by printing a special marker that the bot intercepts.
+
+## Command
+
+```bash
+echo "SEND_FILE:/absolute/path/to/file"
+```
+
+## Rules
+
+- Path MUST be absolute (start with `/` or use `$HOME`)
+- File must exist and be under 50MB
+- The echo output must be exactly `SEND_FILE:<path>` with no other output in the same command
+- Use `~` expansion is supported (e.g., `SEND_FILE:~/reports/output.pdf`)
+
+## Example
+
+```bash
+echo "SEND_FILE:/tmp/report.pdf"
+```
+
+## When to Use
+
+- User asks you to send/share/deliver a file
+- You've generated a file the user needs (PDF, image, export, archive)
+- User says "send me", "give me the file", "share that file"
+EOF
+```
+
+### How It Works
+
+When Kiro executes `echo "SEND_FILE:/path/to/file"`, the bot intercepts the `SEND_FILE:` pattern in stdout and sends the file via `bot.send_document()`. The file is never included in Kiro's response text.
+
 ## Setup
 
 1. Copy settings template and configure:
