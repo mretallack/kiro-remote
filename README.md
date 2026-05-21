@@ -124,7 +124,7 @@ Examples:
 
 ### Limitations
 
-**Usage/Billing Command**: The `/usage` command available in the regular Kiro CLI is not supported in ACP mode. To check your account usage and credits, use the regular CLI:
+**Usage/Billing Command**: The `/usage` command is listed in `_kiro.dev/commands/available` but does not work via `_kiro.dev/commands/execute` in ACP mode. When called, kiro-cli returns zero messages (no RPC response, no notifications), causing the request to hang indefinitely until timeout. This is likely a terminal-only UI command. To check your account usage and credits, use the regular CLI:
 ```bash
 kiro-cli chat
 /usage
