@@ -337,6 +337,8 @@ make run
 
 ## Running as a Service
 
+The bot runs as a user systemd service (no sudo required):
+
 ```bash
 # Install and start service
 make install
@@ -377,7 +379,7 @@ make service-stop
 
 View logs with:
 ```bash
-sudo journalctl -u telegram-kiro-bot -f
+journalctl --user-unit telegram-kiro-bot -f
 ```
 
 ## TODO / Future Enhancements

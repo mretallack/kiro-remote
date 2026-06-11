@@ -551,9 +551,21 @@ class TelegramBot:
                 )
             return True
 
-        # Agent list
-        if normalized == "/agent list":
-            await self.list_agents(update, context)
+        # Agent commands
+        if normalized.startswith("/agent"):
+            parts = normalized.split()
+            if len(parts) >= 2:
+                if parts[1] == "list":
+                    await self.list_agents(update, context)
+                    return True
+                elif parts[1] == "create":
+                    await self._create_agent_single_command(
+                        update, context, message_text, thread_id
+                    )
+                    return True
+                elif parts[1] == "delete" and len(parts) >= 3:
+                    await self.delete_agent(update, context, parts[2])
+                    return True
             return True
 
         # Send file command
@@ -791,9 +803,17 @@ class TelegramBot:
                 if subcommand == "create":
                     if len(parts) >= 3:
                         agent_name = parts[2]
-                        await self.start_agent_creation(update, context, agent_name)
+                        # Check if quoted args provided (single-command format)
+                        if '"' in message_text:
+                            await self._create_agent_single_command(
+                                update, context, message_text
+                            )
+                        else:
+                            await self.start_agent_creation(update, context, agent_name)
                     else:
-                        await update.message.reply_text("Usage: /agent create <name>")
+                        await update.message.reply_text(
+                            'Usage: \\agent create <name> "description" "instructions"'
+                        )
                     return True
 
                 elif subcommand == "list":
@@ -908,6 +928,117 @@ class TelegramBot:
         await update.message.reply_text(
             f"Creating agent '{agent_name}'...\n\nWhat's the agent description?"
         )
+
+    async def _create_agent_single_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE, message_text: str, thread_id: int = None
+    ):
+        """Create an agent from a single command with quoted args.
+
+        Usage: \\agent create <name> "description" "instructions"
+        """
+        chat_id = update.effective_chat.id
+
+        # Parse quoted strings from the message
+        # Strip the command prefix to get: <name> "desc" "instructions"
+        raw = message_text.strip()
+        # Remove \agent create or /agent create prefix
+        for prefix in ["\\agent create ", "/agent create "]:
+            if raw.lower().startswith(prefix.lower()):
+                raw = raw[len(prefix):]
+                break
+
+        # Extract name (first word) and quoted strings
+        parts = raw.split(None, 1)
+        if not parts:
+            msg = '❌ Usage: \\agent create <name> "description" "instructions"'
+            await context.bot.send_message(chat_id=chat_id, text=msg, message_thread_id=thread_id)
+            return
+
+        agent_name = parts[0]
+
+        # Validate name
+        valid, error_msg = self.validate_agent_name(agent_name)
+        if not valid:
+            await context.bot.send_message(
+                chat_id=chat_id, text=f"❌ Invalid agent name: {error_msg}", message_thread_id=thread_id
+            )
+            return
+
+        # Check exists
+        agent_file = Path.home() / ".kiro" / "agents" / f"{agent_name}.json"
+        if agent_file.exists():
+            await context.bot.send_message(
+                chat_id=chat_id, text=f"❌ Agent '{agent_name}' already exists!", message_thread_id=thread_id
+            )
+            return
+
+        # Parse quoted description and instructions
+        remainder = parts[1] if len(parts) > 1 else ""
+        quoted = re.findall(r'"([^"]*)"', remainder)
+
+        if len(quoted) < 2:
+            msg = f'❌ Missing {"description and instructions" if len(quoted) == 0 else "instructions"}.\n\nUsage: \\agent create {agent_name} "description" "instructions"'
+            await context.bot.send_message(chat_id=chat_id, text=msg, message_thread_id=thread_id)
+            return
+
+        description = quoted[0]
+        instructions = quoted[1]
+
+        if not description.strip():
+            await context.bot.send_message(
+                chat_id=chat_id, text="❌ Description cannot be empty", message_thread_id=thread_id
+            )
+            return
+
+        if not instructions.strip():
+            await context.bot.send_message(
+                chat_id=chat_id, text="❌ Instructions cannot be empty", message_thread_id=thread_id
+            )
+            return
+
+        # Create the agent (same logic as handle_create_agent_flow)
+        try:
+            agent_data = self.create_agent_json(agent_name, description, instructions)
+
+            agents_dir = Path.home() / ".kiro" / "agents"
+            agents_dir.mkdir(parents=True, exist_ok=True)
+
+            with open(agents_dir / f"{agent_name}.json", "w") as f:
+                json.dump(agent_data, f, indent=2)
+
+            steering_dir = agents_dir / agent_name / "steering"
+            steering_dir.mkdir(parents=True, exist_ok=True)
+            with open(steering_dir / "overview.md", "w") as f:
+                f.write(f"# {agent_name}\n\n{description}\n")
+
+            working_dir = Path("/home/mark/git") / agent_name
+            working_dir.mkdir(parents=True, exist_ok=True)
+
+            config_file = Path.home() / ".kiro" / "bot_agent_config.json"
+            if config_file.exists():
+                with open(config_file, "r") as f:
+                    config = json.load(f)
+            else:
+                config = {"agents": {}, "default_directory": "/home/mark/git/remote-kiro"}
+
+            config["agents"][agent_name] = {"working_directory": str(working_dir)}
+            with open(config_file, "w") as f:
+                json.dump(config, f, indent=2)
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"✅ Agent '{agent_name}' created!\n\n"
+                    f"📝 {description}\n"
+                    f"📁 {working_dir}\n\n"
+                    f"Use \\topic sync to create a topic for it."
+                ),
+                message_thread_id=thread_id,
+            )
+        except Exception as e:
+            await context.bot.send_message(
+                chat_id=chat_id, text=f"❌ Error creating agent: {e}", message_thread_id=thread_id
+            )
 
     async def list_agents(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle intercepted /agent list command"""

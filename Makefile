@@ -31,24 +31,25 @@ test-bot: setup
 run: setup
 	$(PYTHON) telegram_kiro_bot.py
 
-# Install as systemd service
+# Install as user systemd service
 install:
-	sudo cp telegram-kiro-bot.service /etc/systemd/system/
-	sudo systemctl daemon-reload
-	sudo systemctl enable telegram-kiro-bot
+	mkdir -p ~/.config/systemd/user
+	cp telegram-kiro-bot.service ~/.config/systemd/user/
+	systemctl --user daemon-reload
+	systemctl --user enable telegram-kiro-bot
 
 # Start/stop service
 service-start:
-	sudo systemctl start telegram-kiro-bot
+	systemctl --user start telegram-kiro-bot
 
 service-stop:
-	sudo systemctl stop telegram-kiro-bot
+	systemctl --user stop telegram-kiro-bot
 
 service-status:
-	sudo systemctl status telegram-kiro-bot
+	systemctl --user status telegram-kiro-bot
 
 service-logs:
-	sudo journalctl -u telegram-kiro-bot -f
+	journalctl --user-unit telegram-kiro-bot -f
 
 # Clean up
 clean:
