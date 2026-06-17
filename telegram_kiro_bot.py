@@ -228,6 +228,17 @@ class TelegramBot:
             file_path = self._generate_attachment_path(user_id, filename)
 
             await file.download_to_drive(file_path)
+
+            # Resize if any dimension exceeds 2000px (Bedrock limit)
+            from PIL import Image
+
+            with Image.open(file_path) as img:
+                max_dim = max(img.size)
+                if max_dim > 2000:
+                    img.thumbnail((2000, 2000))
+                    img.save(file_path)
+                    logger.info(f"Resized photo to {img.size}")
+
             logger.info(f"Downloaded photo to {file_path}")
 
             # Format message and send to Kiro

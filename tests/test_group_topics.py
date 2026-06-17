@@ -44,6 +44,7 @@ def mock_update():
     """Create a mock group forum message update."""
     update = Mock()
     update.effective_user = Mock()
+    update.effective_user.id = 12345
     update.effective_user.username = "testuser"
     update.effective_chat = Mock()
     update.effective_chat.id = -100123456

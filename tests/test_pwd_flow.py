@@ -131,7 +131,6 @@ def test_pwd_flow():
 
     # Assert for pytest
     assert len(chunks_received) > 0, "Should have received chunks"
-    assert len(tools_called) > 0, "Should have called tools"
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ def test_mode_switch_verification():
     session = KiroSessionACP()
     responses = []
 
-    def capture_response(chat_id, message):
+    def capture_response(chat_id, message, thread_id=None):
         """Capture responses for verification."""
         responses.append(message)
         print(f"[RESPONSE] {message[:100]}...")

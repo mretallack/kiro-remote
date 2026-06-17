@@ -19,7 +19,7 @@ class TestACPBasic:
         client.close()
 
         assert "agentInfo" in result
-        assert result["agentInfo"]["name"] == "Kiro Agent"
+        assert result["agentInfo"]["name"] == "Kiro CLI Agent"
 
     def test_session_creation(self):
         """Test session creation."""
