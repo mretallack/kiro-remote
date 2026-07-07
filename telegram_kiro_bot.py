@@ -391,7 +391,9 @@ class TelegramBot:
             import asyncio
 
             loop = asyncio.get_event_loop()
-            text = await loop.run_in_executor(None, self._transcribe_audio, str(file_path))
+            text = await loop.run_in_executor(
+                None, self._transcribe_audio, str(file_path)
+            )
 
             # Delete the status message
             try:
@@ -409,7 +411,9 @@ class TelegramBot:
 
             # Format message for Kiro
             caption = update.message.caption or ""
-            voice_context = f"[Voice message transcription ({duration}s)]: \"{text.strip()}\""
+            voice_context = (
+                f'[Voice message transcription ({duration}s)]: "{text.strip()}"'
+            )
             if caption:
                 message = f"{caption}\n\n{voice_context}"
             else:
