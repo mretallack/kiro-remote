@@ -1,2 +1,3 @@
 python-telegram-bot==21.8
 Pillow==11.1.0
+faster-whisper==1.1.0

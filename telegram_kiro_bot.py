@@ -74,6 +74,9 @@ class TelegramBot:
         self._topic_agent_cache = {}  # thread_id (int) -> agent_name (str)
         self._load_topic_cache()
 
+        # Whisper model for voice transcription (lazy-loaded on first use)
+        self._whisper_model = None
+
         # Configure timeouts
         self.kiro.chunk_timeout = chunk_timeout
         self.kiro.typing_refresh_interval = typing_refresh_interval
@@ -111,6 +114,9 @@ class TelegramBot:
         self.application.add_handler(MessageHandler(filters.PHOTO, self.handle_photo))
         self.application.add_handler(
             MessageHandler(filters.Document.ALL, self.handle_document)
+        )
+        self.application.add_handler(
+            MessageHandler(filters.VOICE | filters.AUDIO, self.handle_voice)
         )
 
         # Forum topic lifecycle handlers
@@ -331,6 +337,122 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Error handling document: {e}")
             await update.message.reply_text(f"❌ Failed to process document: {e}")
+
+    def _get_whisper_model(self):
+        """Lazy-load the faster-whisper model on first use."""
+        if self._whisper_model is None:
+            from faster_whisper import WhisperModel
+
+            logger.info("Loading Whisper model (small, int8)...")
+            self._whisper_model = WhisperModel(
+                "small", device="cpu", compute_type="int8"
+            )
+            logger.info("Whisper model loaded")
+        return self._whisper_model
+
+    async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle voice messages and audio files — transcribe and send text to Kiro."""
+        if update.effective_user.id != self.authorized_user_id:
+            return
+
+        try:
+            chat_id = update.effective_chat.id
+            thread_id = getattr(update.message, "message_thread_id", None)
+
+            # Get the voice or audio file
+            if update.message.voice:
+                voice = update.message.voice
+                file = await context.bot.get_file(voice.file_id)
+                duration = voice.duration
+                filename = f"voice_{voice.file_id[-8:]}.ogg"
+            else:
+                audio = update.message.audio
+                file = await context.bot.get_file(audio.file_id)
+                duration = audio.duration
+                filename = audio.file_name or f"audio_{audio.file_id[-8:]}.ogg"
+
+            # Download to attachments dir
+            user_id = update.effective_user.id
+            file_path = self._generate_attachment_path(user_id, filename)
+            await file.download_to_drive(file_path)
+            logger.info(f"Downloaded voice message to {file_path} ({duration}s)")
+
+            # Send transcribing indicator
+            reply_kwargs = {}
+            if thread_id:
+                reply_kwargs["message_thread_id"] = thread_id
+            status_msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text="🎤 Transcribing...",
+                **reply_kwargs,
+            )
+
+            # Transcribe in a thread to avoid blocking the event loop
+            import asyncio
+
+            loop = asyncio.get_event_loop()
+            text = await loop.run_in_executor(None, self._transcribe_audio, str(file_path))
+
+            # Delete the status message
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+
+            if not text or not text.strip():
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="🎤 (empty transcription — no speech detected)",
+                    **reply_kwargs,
+                )
+                return
+
+            # Format message for Kiro
+            caption = update.message.caption or ""
+            voice_context = f"[Voice message transcription ({duration}s)]: \"{text.strip()}\""
+            if caption:
+                message = f"{caption}\n\n{voice_context}"
+            else:
+                message = voice_context
+            message = message.replace("\n", "\\n")
+
+            # Route to appropriate agent (group topic or 1-to-1)
+            if update.effective_chat.type in ("group", "supergroup") and thread_id:
+                agent_name = await self._resolve_topic_agent(update, context, thread_id)
+                if agent_name:
+                    if agent_name not in self.kiro.agents:
+                        self.kiro.start_agent_background(agent_name=agent_name)
+                        await asyncio.sleep(2)
+                    await context.bot.send_chat_action(
+                        chat_id=chat_id,
+                        action=ChatAction.TYPING,
+                        message_thread_id=thread_id,
+                    )
+                    self.kiro.send_message_to_agent(
+                        agent_name, message, chat_id, thread_id
+                    )
+                return
+
+            # 1-to-1 chat
+            self.kiro.set_chat_id(chat_id)
+            self.kiro.last_typing_indicator = 0
+            self.kiro.send_to_kiro(message)
+            await update.effective_chat.send_action(ChatAction.TYPING)
+
+        except Exception as e:
+            logger.error(f"Error handling voice message: {e}")
+            await update.message.reply_text(f"❌ Failed to process voice message: {e}")
+
+    def _transcribe_audio(self, file_path):
+        """Transcribe audio file using faster-whisper. Runs in executor thread."""
+        model = self._get_whisper_model()
+        segments, info = model.transcribe(file_path, beam_size=5, vad_filter=True)
+        text = " ".join(segment.text for segment in segments)
+        logger.info(
+            f"Transcribed {file_path}: language={info.language} "
+            f"probability={info.language_probability:.2f} length={len(text)}"
+        )
+        return text
 
     async def handle_group_message(
         self,

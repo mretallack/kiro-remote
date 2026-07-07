@@ -17,6 +17,7 @@ A Python service that bridges Telegram with Kiro CLI, maintaining persistent con
 - **Agent Management**: Create, switch, and manage Kiro agents with isolated contexts
 - **Conversation Persistence**: Save and restore conversation sessions with session IDs
 - **Attachment Support**: Send images (native ACP support) and documents to Kiro
+- **Voice Messages**: Automatic speech-to-text transcription via Whisper
 - **Real-time Progress**: See tool execution status as Kiro works
 - **Clean Communication**: Structured JSON-RPC protocol (no ANSI parsing needed)
 - **User Filtering**: Only responds to authorized user (configurable)
@@ -72,6 +73,27 @@ Files are saved with the pattern: `{timestamp}_{user_id}_{filename}`
 4. Kiro can read, analyze, or process the file as needed
 
 **Note**: Image attachments use ACP's native image content type for better integration.
+
+## Voice Messages
+
+Send voice messages or audio files to the bot — they are automatically transcribed to text and sent to Kiro.
+
+### How It Works
+1. Send a voice message or audio file to the bot
+2. Bot shows "🎤 Transcribing..." while processing
+3. Speech is transcribed using [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (Whisper small model, int8, CPU)
+4. Transcription is sent to Kiro as: `[Voice message transcription (Xs)]: "your words"`
+5. Kiro responds to the transcribed text
+
+### Supported Formats
+- **Voice messages**: Telegram's native voice recordings (OGG/Opus)
+- **Audio files**: Any audio file sent as an attachment
+
+### Details
+- Uses VAD (Voice Activity Detection) to skip silence
+- Whisper model is lazy-loaded on first voice message (avoids startup overhead)
+- Transcription runs in a background thread to keep the bot responsive
+- Works in both 1-to-1 chats and group topics
 
 ## Bot Commands
 
