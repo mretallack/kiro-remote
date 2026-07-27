@@ -764,6 +764,15 @@ class TelegramBot:
                 )
             return True
 
+        # Help command
+        if normalized == "/help":
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=self._get_help_text(),
+                message_thread_id=thread_id,
+            )
+            return True
+
         return False
 
     async def _sync_topics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1281,9 +1290,9 @@ class TelegramBot:
                 response += f"   {info['query']}\n"
         await update.message.reply_text(response, parse_mode="HTML")
 
-    async def show_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Show all available bot commands"""
-        help_text = """📚 Telegram Kiro Bot Commands
+    def _get_help_text(self) -> str:
+        """Return the help text for bot commands."""
+        return """📚 Telegram Kiro Bot Commands
 
 Agent Management
 \\agent list - List all agents
@@ -1314,7 +1323,10 @@ Operation Control
 Help
 \\help - Show this help message
 """
-        await update.message.reply_text(help_text)
+
+    async def show_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show all available bot commands"""
+        await update.message.reply_text(self._get_help_text())
 
     async def show_usage(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle intercepted /usage command - show credits and billing info"""

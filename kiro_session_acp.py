@@ -276,14 +276,16 @@ class KiroSessionACP:
                     return
 
                 # Intercept SEND_FILE: pattern for Kiro-initiated file sending
-                send_file_match = re.match(r"^SEND_FILE:(.+)$", stdout)
-                if send_file_match:
-                    file_path = send_file_match.group(1).strip()
-                    self._send_file_to_telegram_sync(
-                        agent_data["chat_id"],
-                        file_path,
-                        thread_id=agent_data.get("thread_id"),
-                    )
+                send_file_matches = re.findall(
+                    r"^SEND_FILE:(.+)$", stdout, re.MULTILINE
+                )
+                if send_file_matches:
+                    for file_path in send_file_matches:
+                        self._send_file_to_telegram_sync(
+                            agent_data["chat_id"],
+                            file_path.strip(),
+                            thread_id=agent_data.get("thread_id"),
+                        )
                     return
 
                 # Truncate if too long (first 1000 + last 1000 bytes)
